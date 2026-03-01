@@ -42,7 +42,7 @@ class Assistant(Agent, llm.ToolContext):
     @agents.function_tool
     async def criar_pasta(self, caminho: str):
         """Cria uma nova pasta no caminho especificado."""
-        return self.jarvis_control.criar_pasta(caminho)
+        return self.jarvis_control.cria_pasta(caminho)
 
     @agents.function_tool
     async def deletar_item(self, caminho: str):
