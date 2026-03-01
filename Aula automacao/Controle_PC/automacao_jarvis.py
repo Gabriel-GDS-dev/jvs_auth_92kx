@@ -22,8 +22,14 @@ class JarvisControl:
 
     def cria_pasta(self, caminho):
         try:
-            os.makedirs(caminho, exist_ok=True)
-            return f"Pasta criada com sucesso em: {caminho}"
+            # Se não houver diretório no caminho (ex: "Nova Pasta"), salva na Área de Trabalho
+            if not os.path.dirname(caminho):
+                desktop = os.path.join(os.path.expanduser('~'), 'Desktop')
+                caminho = os.path.join(desktop, caminho)
+                
+            caminho_abs = os.path.abspath(caminho)
+            os.makedirs(caminho_abs, exist_ok=True)
+            return f"Pasta criada com sucesso no caminho exato: {caminho_abs}"
         except Exception as e:
             return f"Erro ao criar pasta: {str(e)}"
 
