@@ -22,8 +22,9 @@ class JarvisControl:
 
     def cria_pasta(self, caminho):
         try:
-            # Se não houver diretório no caminho (ex: "Nova Pasta"), salva na Área de Trabalho
-            if not os.path.dirname(caminho):
+            caminho = os.path.expanduser(caminho)
+            # Se o caminho não for absoluto, salva na Área de Trabalho
+            if not os.path.isabs(caminho):
                 desktop = os.path.join(os.path.expanduser('~'), 'Desktop')
                 caminho = os.path.join(desktop, caminho)
                 
@@ -35,6 +36,13 @@ class JarvisControl:
 
     def deletar_arquivo(self, caminho):
         try:
+            caminho = os.path.expanduser(caminho)
+            if not os.path.isabs(caminho):
+                desktop = os.path.join(os.path.expanduser('~'), 'Desktop')
+                caminho = os.path.join(desktop, caminho)
+                
+            caminho = os.path.abspath(caminho)
+
             if os.path.isfile(caminho):
                 os.remove(caminho)
                 return f"Arquivo {caminho} deletado."
@@ -42,7 +50,7 @@ class JarvisControl:
                 shutil.rmtree(caminho)
                 return f"Diretório {caminho} deletado."
             else:
-                return "Caminho não encontrado."
+                return f"Caminho não encontrado: {caminho}"
         except Exception as e:
             return f"Erro ao deletar item: {str(e)}"
 
