@@ -50,6 +50,11 @@ class Assistant(Agent, llm.ToolContext):
         return self.jarvis_control.deletar_arquivo(caminho)
 
     @agents.function_tool
+    async def deletar_pasta(self, caminho: str):
+        """Deleta uma pasta (diretório) no caminho especificado. Use esta ferramenta preferencialmente para pastas."""
+        return self.jarvis_control.deletar_arquivo(caminho)
+
+    @agents.function_tool
     async def limpar_diretorio(self, caminho: str):
         """Remove todos os arquivos e pastas de um diretório sem deletar o diretório em si."""
         return self.jarvis_control.limpar_diretorio(caminho)
