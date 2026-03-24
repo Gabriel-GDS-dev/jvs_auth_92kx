@@ -6,6 +6,23 @@ from prompts import AGENT_INSTRUCTION, SESSION_INSTRUCTION
 from mem0 import AsyncMemoryClient
 import logging
 import os
+import asyncio
+import webbrowser
+import subprocess
+from urllib.parse import quote_plus
+import urllib.request as _urllib
+
+try:
+    import yt_dlp
+    YT_DLP_DISPONIVEL = True
+except ImportError:
+    YT_DLP_DISPONIVEL = False
+
+try:
+    from playwright.async_api import async_playwright
+    PLAYWRIGHT_DISPONIVEL = True
+except ImportError:
+    PLAYWRIGHT_DISPONIVEL = False
 
 from automacao_jarvis import JarvisControl
 
@@ -14,16 +31,63 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# ─────────────────────────────────────────
+# CHROME + CDP
+# ─────────────────────────────────────────
 
-# ==========================================
+def _get_chrome_path():
+    caminhos = [
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        os.path.expandvars(r"%LocalAppData%\Google\Chrome\Application\chrome.exe"),
+    ]
+    for c in caminhos:
+        if os.path.exists(c):
+            return c
+    return None
+
+CHROME_PATH = _get_chrome_path()
+CDP_URL = "http://localhost:9222"
+
+def _cdp_disponivel() -> bool:
+    """Verifica se o Chrome já está rodando com depuração remota."""
+    try:
+        with _urllib.urlopen(f"{CDP_URL}/json/version", timeout=1) as r:
+            return r.status == 200
+    except:
+        return False
+
+async def _abrir_chrome_com_cdp(url: str = "about:blank"):
+    """Abre o Chrome com porta de depuração (CDP) e navega para a URL."""
+    if not CHROME_PATH:
+        webbrowser.open(url)
+        return False
+    # Se o Chrome já está aberto COM cdp, só abre nova aba
+    if _cdp_disponivel():
+        try:
+            async with async_playwright() as p:
+                browser = await p.chromium.connect_over_cdp(CDP_URL)
+                page = await browser.contexts[0].new_page()
+                await page.goto(url)
+                await browser.disconnect()
+            return True
+        except:
+            pass
+    # Fecha o Chrome e reabre com depuração
+    subprocess.run(["taskkill", "/f", "/im", "chrome.exe"], capture_output=True)
+    await asyncio.sleep(1)
+    subprocess.Popen([CHROME_PATH, f"--remote-debugging-port=9222", url])
+    await asyncio.sleep(2.5)
+    return _cdp_disponivel()
+
+
+# ─────────────────────────────────────────
 # AGENTE
-# ==========================================
+# ─────────────────────────────────────────
 
 class Assistant(Agent, llm.ToolContext):
     def __init__(self, chat_ctx: ChatContext = None):
-
         llm.ToolContext.__init__(self, [])
-
         super().__init__(
             instructions=AGENT_INSTRUCTION,
             llm=google.beta.realtime.RealtimeModel(
@@ -32,136 +96,197 @@ class Assistant(Agent, llm.ToolContext):
             ),
             chat_ctx=chat_ctx,
         )
-
         self.jarvis_control = JarvisControl()
 
-    # ================================
-    # FERRAMENTAS
-    # ================================
+    # ────────────────────────────────
+    # MÍDIA E WEB
+    # ────────────────────────────────
+
+    @agents.function_tool
+    async def pesquisar_na_web(self, consulta: str, tipo: str = "google"):
+        """
+        Faz uma busca ou abre o YouTube.
+        tipo = 'google' → busca no Google
+        tipo = 'youtube' → abre a busca no YouTube (não inicia um vídeo automaticamente)
+        tipo = 'url' → abre a URL diretamente
+        """
+        try:
+            if tipo.lower() == "youtube":
+                # Abre a BUSCA no YouTube, não um vídeo aleatório
+                url = f"https://www.youtube.com/results?search_query={quote_plus(consulta)}"
+                await _abrir_chrome_com_cdp(url)
+                return f"Abrindo busca do YouTube por '{consulta}'."
+
+            elif tipo.lower() == "url":
+                await _abrir_chrome_com_cdp(consulta)
+                return f"Abrindo: {consulta}"
+
+            else: # google (padrão)
+                url = f"https://www.google.com/search?q={quote_plus(consulta)}"
+                await _abrir_chrome_com_cdp(url)
+                return f"Pesquisando '{consulta}' no Google."
+        except Exception as e:
+            return f"Erro na pesquisa: {e}"
+
+    @agents.function_tool
+    async def pausar_retomar_youtube(self):
+        """Pausa ou retoma o vídeo do YouTube que estiver tocando no Chrome."""
+        try:
+            # Estratégia 1: Keyboard shortcut via pygetwindow (mais confiável)
+            try:
+                import pygetwindow as gw
+                import pyautogui
+                import time
+
+                # Procura janelas do Chrome que contenham "YouTube"
+                janelas_yt = [w for w in gw.getAllWindows()
+                              if "youtube" in w.title.lower() and w.visible]
+
+                if janelas_yt:
+                    janela = janelas_yt[0]
+                    janela.activate()   # traz o Chrome para frente
+                    time.sleep(0.4)     # aguarda o foco
+                    pyautogui.press("k")  # 'K' = play/pause no YouTube
+                    return "Play/Pause alternado no YouTube ✓"
+            except ImportError:
+                pass  # pygetwindow/pyautogui não instalados, tenta CDP
+
+            # Estratégia 2: CDP (só funciona se Chrome foi aberto com --remote-debugging-port)
+            if PLAYWRIGHT_DISPONIVEL and _cdp_disponivel():
+                async with async_playwright() as p:
+                    browser = await p.chromium.connect_over_cdp(CDP_URL)
+                    for ctx in browser.contexts:
+                        for page in ctx.pages:
+                            if "youtube.com/watch" in page.url:
+                                await page.evaluate(
+                                    "const v = document.querySelector('video'); if(v) { v.paused ? v.play() : v.pause(); }"
+                                )
+                                await browser.disconnect()
+                                return "Play/Pause alternado via CDP ✓"
+                    await browser.disconnect()
+                return "Nenhum vídeo do YouTube encontrado no Chrome."
+
+            return ("Não foi possível controlar o YouTube. "
+                    "Instale pygetwindow e pyautogui: pip install pygetwindow pyautogui")
+        except Exception as e:
+            return f"Erro no controle de mídia: {e}"
+
+    @agents.function_tool
+    async def fechar_programa(self, programa: str):
+        """Fecha um programa pelo nome (ex: 'chrome', 'notepad', 'spotify')."""
+        exe = programa if programa.lower().endswith(".exe") else f"{programa}.exe"
+        res = subprocess.run(["taskkill", "/f", "/im", exe], capture_output=True)
+        if res.returncode == 0:
+            return f"Programa '{programa}' fechado com sucesso."
+        return f"Não foi possível fechar '{programa}'. Verifique o nome do processo."
+
+    @agents.function_tool
+    async def abrir_programa(self, comando: str):
+        """Abre um programa ou executável pelo nome ou caminho (ex: 'notepad', 'calc')."""
+        try:
+            subprocess.Popen(comando, shell=True)
+            return f"'{comando}' aberto."
+        except Exception as e:
+            return f"Erro ao abrir '{comando}': {e}"
+
+    # ────────────────────────────────
+    # ARQUIVOS E PASTAS
+    # ────────────────────────────────
 
     @agents.function_tool
     async def criar_pasta(self, caminho: str):
-        """Cria uma nova pasta no caminho especificado."""
+        """
+        Cria uma pasta. Exemplos de comandos válidos:
+        - 'Projetos' → cria na Área de Trabalho
+        - 'Projetos/Python' → cria subpasta na Área de Trabalho
+        - 'Desktop/Projetos' → equivale a Área de Trabalho
+        NÃO inclua 'C:/' ou caminhos absolutos, apenas o nome da pasta.
+        """
         return self.jarvis_control.cria_pasta(caminho)
 
     @agents.function_tool
     async def deletar_item(self, caminho: str):
-        """Deleta um arquivo ou diretório no caminho especificado."""
-        return self.jarvis_control.deletar_arquivo(caminho)
-
-    @agents.function_tool
-    async def deletar_pasta(self, caminho: str):
-        """Deleta uma pasta (diretório) no caminho especificado. Use esta ferramenta preferencialmente para pastas."""
+        """Deleta um arquivo ou pasta pelo nome ou caminho."""
         return self.jarvis_control.deletar_arquivo(caminho)
 
     @agents.function_tool
     async def limpar_diretorio(self, caminho: str):
-        """Remove todos os arquivos e pastas de um diretório sem deletar o diretório em si."""
+        """Remove todo o conteúdo de uma pasta, sem deletar a pasta em si."""
         return self.jarvis_control.limpar_diretorio(caminho)
 
     @agents.function_tool
     async def mover_item(self, origem: str, destino: str):
-        """Move um arquivo ou pasta de uma origem para um destino."""
+        """Move um arquivo ou pasta de origem para destino."""
         return self.jarvis_control.mover_item(origem, destino)
 
     @agents.function_tool
     async def copiar_item(self, origem: str, destino: str):
-        """Copia um arquivo ou pasta de uma origem para um destino."""
+        """Copia um arquivo ou pasta para um novo local."""
         return self.jarvis_control.copiar_item(origem, destino)
 
     @agents.function_tool
     async def renomear_item(self, caminho: str, novo_nome: str):
-        """Renomeia um arquivo ou pasta existente."""
+        """Renomeia um arquivo ou pasta."""
         return self.jarvis_control.renomear_item(caminho, novo_nome)
 
     @agents.function_tool
     async def organizar_pasta(self, caminho: str):
-        """Organiza os arquivos de uma pasta separando-os por tipo (Imagens, Documentos, etc)."""
+        """Organiza os arquivos de uma pasta por tipo (Imagens, Documentos, etc.)."""
         return self.jarvis_control.organizar_pasta(caminho)
 
     @agents.function_tool
     async def compactar_pasta(self, caminho: str):
-        """Compacta uma pasta no formato ZIP."""
+        """Compacta uma pasta em um arquivo .zip."""
         return self.jarvis_control.compactar_pasta(caminho)
 
     @agents.function_tool
+    async def abrir_pasta(self, nome_pasta: str):
+        """Abre uma pasta no Explorador de Arquivos pelo nome."""
+        return self.jarvis_control.abrir_pasta(nome_pasta)
+
+    @agents.function_tool
+    async def buscar_e_abrir_arquivo(self, nome_arquivo: str):
+        """Busca um arquivo por nome e o abre automaticamente."""
+        return self.jarvis_control.buscar_e_abrir_arquivo(nome_arquivo)
+
+    # ────────────────────────────────
+    # SISTEMA
+    # ────────────────────────────────
+
+    @agents.function_tool
     async def controle_volume(self, nivel: int):
-        """Ajusta o volume do sistema do computador (nivel de 0 a 100)."""
+        """Ajusta o volume do sistema de 0 a 100."""
         return self.jarvis_control.controle_volume(nivel)
 
     @agents.function_tool
     async def controle_brilho(self, nivel: int):
-        """Ajusta o brilho da tela do computador (nivel de 0 a 100)."""
+        """Ajusta o brilho da tela de 0 a 100."""
         return self.jarvis_control.controle_brilho(nivel)
 
     @agents.function_tool
-    async def atalhos_navegacao(self, site: str):
-        """Abre sites cadastrados nos atalhos (ex: youtube, github, chatgpt, google)."""
-        return self.jarvis_control.atalhos_navegacao(site)
-
-    @agents.function_tool
-    async def pesquisar_no_google(self, termo: str):
-        """Pesquisa um termo no Google no navegador padrão."""
-        return self.jarvis_control.pesquisar_no_google(termo)
-
-    @agents.function_tool
     async def energia_pc(self, acao: str):
-        """Gerencia a energia do computador (acoes permitidas: desligar, reiniciar, bloquear)."""
+        """Controla a energia do PC. Ações: 'desligar', 'reiniciar', 'bloquear'."""
         return self.jarvis_control.energia_pc(acao)
 
     @agents.function_tool
     async def abrir_aplicativo(self, nome_app: str):
-        """Abre aplicativos no computador pelo nome (ex: bloco de notas, calculadora, cmd, navegador, word)."""
+        """Abre aplicativos conhecidos pelo nome (ex: 'spotify', 'vscode', 'calculadora')."""
         return self.jarvis_control.abrir_aplicativo(nome_app)
 
 
-# ==========================================
+# ─────────────────────────────────────────
 # ENTRYPOINT
-# ==========================================
+# ─────────────────────────────────────────
 
 async def entrypoint(ctx: agents.JobContext):
 
-    mem0 = AsyncMemoryClient()
+    mem0_client = AsyncMemoryClient()
     user_id = "PedroLucas"
-
-    # ==================================
-    # CARREGAR MEMÓRIA
-    # ==================================
-
-    initial_ctx = ChatContext()
-    memory_text = ""
-
-    try:
-        results = await mem0.get_all(user_id=user_id)
-        logger.info(f"Memórias carregadas: {len(results) if results else 0}")
-    except Exception as e:
-        logger.warning(f"Erro ao carregar memória: {e}")
-        results = []
-
-    if results:
-        memories = [
-            result.get("memory")
-            for result in results
-            if isinstance(result, dict) and result.get("memory")
-        ]
-
-        if memories:
-            memory_text = "\n".join(f"- {m}" for m in memories)
-
-            initial_ctx.add_message(
-                role="assistant",
-                content=f"""
-O nome do usuário é {user_id}.
-Aqui estão informações importantes sobre ele:
-{memory_text}
-Use essas informações naturalmente durante a conversa.
-"""
-            )
 
     await ctx.connect()
 
     session = AgentSession()
-    agent = Assistant(chat_ctx=initial_ctx)
+    agent = Assistant(chat_ctx=ChatContext())
 
     await session.start(
         room=ctx.room,
@@ -172,52 +297,71 @@ Use essas informações naturalmente durante a conversa.
         ),
     )
 
-    # ==================================
-    # SALVAR MEMÓRIA NO ENCERRAMENTO
-    # ==================================
+    # ── Carregar Memória de Longo Prazo ─────────────────
+    # NOTA: Na API v2 do Mem0, user_id vai dentro de 'filters'
+    try:
+        logger.info(f"[Mem0] Carregando memórias para '{user_id}'...")
+        response = await mem0_client.search(
+            query="histórico, preferências e informações pessoais do usuário",
+            filters={"user_id": user_id},
+            limit=20,
+        )
+        # O retorno da v2 pode ser dict com "results" ou lista direta
+        if isinstance(response, dict):
+            results = response.get("results", [])
+        elif isinstance(response, list):
+            results = response
+        else:
+            results = []
 
+        logger.info(f"[Mem0] {len(results)} memórias encontradas.")
+
+        if results:
+            memorias = []
+            for r in results:
+                texto = None
+                if isinstance(r, dict):
+                    texto = r.get("memory") or r.get("text") or r.get("content")
+                if texto:
+                    memorias.append(f"- {texto}")
+
+            if memorias:
+                bloco = "\n".join(memorias)
+                ctx_copia = agent.chat_ctx.copy()
+                ctx_copia.add_message(
+                    role="assistant",
+                    content=f"[Memória carregada — informações sobre o usuário]\n{bloco}"
+                )
+                agent.update_chat_ctx(ctx_copia)
+                logger.info(f"[Mem0] {len(memorias)} memórias injetadas no contexto.")
+    except Exception as e:
+        logger.error(f"[Mem0] Erro ao carregar memória: {e}")
+
+    # ── Salvar Memória ao Desligar ───────────────────────
     async def shutdown_hook():
         try:
-            messages = []
-
+            msgs = []
             for item in session._agent.chat_ctx.items:
                 if not hasattr(item, "content") or not item.content:
                     continue
-
-                if item.role in ["user", "assistant"]:
-                    content_str = (
-                        "".join(item.content)
-                        if isinstance(item.content, list)
-                        else str(item.content)
-                    )
-
-                    messages.append(
-                        {
-                            "role": item.role,
-                            "content": content_str.strip(),
-                        }
-                    )
-
-            if messages:
-                await mem0.add(messages, user_id=user_id)
-                logger.info("Memória salva com sucesso.")
-
+                if item.role not in ("user", "assistant"):
+                    continue
+                conteudo = "".join(item.content) if isinstance(item.content, list) else str(item.content)
+                conteudo = conteudo.strip()
+                if conteudo:
+                    msgs.append({"role": item.role, "content": conteudo})
+            if msgs:
+                await mem0_client.add(msgs, user_id=user_id)
+                logger.info(f"[Mem0] {len(msgs)} mensagens salvas na memória.")
         except Exception as e:
-            logger.warning(f"Erro ao salvar memória: {e}")
+            logger.warning(f"[Mem0] Erro ao salvar memória: {e}")
 
     ctx.add_shutdown_callback(shutdown_hook)
 
     await session.generate_reply(
-        instructions=SESSION_INSTRUCTION
-        + "\nCumprimente o usuário de forma breve, confiante e natural."
+        instructions=SESSION_INSTRUCTION + "\nCumprimente o usuário de forma natural e confiante."
     )
 
-
-# ==========================================
-# RUN
-# ==========================================
 
 if __name__ == "__main__":
-    agents.cli.run_app(
-        agents.WorkerOptions(entrypoint_fnc=entrypoint)
-    )
+    agents.cli.run_app(agents.WorkerOptions(entrypoint_fnc=entrypoint))

@@ -12,3 +12,7 @@ python-dotenv
 pycaw
 comtypes
 screen_brightness_control
+playwright
+yt-dlp
+pygetwindow
+pyautogui
