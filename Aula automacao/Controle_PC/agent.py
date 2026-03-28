@@ -74,7 +74,7 @@ async def _abrir_chrome_com_cdp(url: str = "about:blank"):
         except:
             pass
     # Fecha o Chrome e reabre com depuração
-    subprocess.run(["taskkill", "/f", "/im", "chrome.exe"], capture_output=True)
+   # subprocess.run(["taskkill", "/f", "/im", "chrome.exe"], capture_output=True)
     await asyncio.sleep(1)
     subprocess.Popen([CHROME_PATH, f"--remote-debugging-port=9222", url])
     await asyncio.sleep(2.5)
@@ -332,7 +332,7 @@ async def entrypoint(ctx: agents.JobContext):
                     role="assistant",
                     content=f"[Memória carregada — informações sobre o usuário]\n{bloco}"
                 )
-                agent.update_chat_ctx(ctx_copia)
+                await agent.update_chat_ctx(ctx_copia)
                 logger.info(f"[Mem0] {len(memorias)} memórias injetadas no contexto.")
     except Exception as e:
         logger.error(f"[Mem0] Erro ao carregar memória: {e}")
