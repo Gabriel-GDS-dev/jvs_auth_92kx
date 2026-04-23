@@ -3,6 +3,7 @@ import shutil
 import webbrowser
 import zipfile
 import subprocess
+import base64
 from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 from ctypes import cast, POINTER
 from comtypes import CLSCTX_ALL
@@ -202,6 +203,71 @@ class JarvisControl:
             return f"Compactado em: {path_abs}.zip"
         except Exception as e:
             return f"Erro ao compactar: {str(e)}"
+
+    def criar_ou_editar_arquivo(self, caminho, modo='w', conteudo=None, conteudo_base64=None, encoding='utf-8'):
+        """
+        Cria ou edita arquivos usando open() com gerenciador de contexto.
+
+        Modos suportados para texto: w, a, x, r+, w+, a+, x+
+        Modos suportados para binário: wb, ab, xb, rb+, r+b, wb+, ab+, xb+
+        Para arquivos binários, envie o conteúdo em base64.
+        """
+        path_abs = self._resolver_caminho(caminho)
+        try:
+            modo = modo.strip().lower()
+
+            modos_validos = {
+                'w', 'a', 'x', 'r+', 'w+', 'a+', 'x+',
+                'wb', 'ab', 'xb', 'rb+', 'r+b', 'wb+', 'ab+', 'xb+'
+            }
+
+            if modo not in modos_validos:
+                return (
+                    "Modo de arquivo inválido. Use um destes: "
+                    + ", ".join(sorted(modos_validos))
+                )
+
+            existe_antes = os.path.exists(path_abs)
+            diretorio_pai = os.path.dirname(path_abs)
+            if diretorio_pai and any(flag in modo for flag in ('w', 'a', 'x')):
+                os.makedirs(diretorio_pai, exist_ok=True)
+
+            arquivo_binario = 'b' in modo
+
+            if arquivo_binario:
+                dados_binarios = None
+                if conteudo_base64 is not None:
+                    try:
+                        dados_binarios = base64.b64decode(conteudo_base64)
+                    except Exception as e:
+                        return f"Erro ao decodificar conteúdo base64: {str(e)}"
+
+                with open(path_abs, modo) as arquivo:
+                    if dados_binarios is not None:
+                        if '+' in modo and 'a' not in modo:
+                            arquivo.seek(0)
+                        arquivo.write(dados_binarios)
+                        if 'r+' in modo or 'rb+' in modo or 'r+b' in modo:
+                            arquivo.truncate()
+
+                acao = 'criado' if not existe_antes and os.path.exists(path_abs) else 'atualizado'
+                tamanho = os.path.getsize(path_abs) if os.path.exists(path_abs) else 0
+                return f"Arquivo binário {acao} com sucesso: {path_abs} ({tamanho} bytes)."
+
+            texto = conteudo if conteudo is not None else ''
+            with open(path_abs, modo, encoding=encoding) as arquivo:
+                if '+' in modo and 'a' not in modo:
+                    arquivo.seek(0)
+                arquivo.write(texto)
+                if 'r+' in modo:
+                    arquivo.truncate()
+
+            acao = 'criado' if not existe_antes and os.path.exists(path_abs) else 'atualizado'
+            return f"Arquivo {acao} com sucesso: {path_abs}"
+        except FileNotFoundError:
+            return f"Arquivo não encontrado para edição: {path_abs}"
+        except Exception as e:
+            return f"Erro ao criar/editar arquivo: {str(e)}"
 
     # --- Controle de Sistema ---
 

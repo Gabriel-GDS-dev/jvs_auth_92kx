@@ -1,6 +1,6 @@
 from dotenv import load_dotenv
 from livekit import agents
-from livekit.agents import AgentSession, Agent, RoomInputOptions, ChatContext, llm
+from livekit.agents import AgentSession, Agent, RoomInputOptions, ChatContext, llm, NOT_GIVEN
 from livekit.plugins import noise_cancellation, google
 from prompts import AGENT_INSTRUCTION, SESSION_INSTRUCTION
 from mem0 import AsyncMemoryClient
@@ -9,6 +9,7 @@ import os
 import asyncio
 import webbrowser
 import subprocess
+from urllib.error import HTTPError, URLError
 from urllib.parse import quote_plus
 import urllib.request as _urllib
 
@@ -30,6 +31,114 @@ load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+class GoogleRealtimeSettings:
+    def __init__(
+        self,
+        *,
+        model: str,
+        voice: str,
+        temperature: float,
+        vertexai: bool,
+        api_key: str | None = None,
+        project: str | None = None,
+        location: str | None = None,
+    ):
+        self.model = model
+        self.voice = voice
+        self.temperature = temperature
+        self.vertexai = vertexai
+        self.api_key = api_key
+        self.project = project
+        self.location = location
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _get_google_api_key() -> str | None:
+    return os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+
+
+def _get_google_realtime_settings() -> GoogleRealtimeSettings:
+    use_vertexai = _env_flag("GOOGLE_GENAI_USE_VERTEXAI")
+    model = os.getenv("GOOGLE_REALTIME_MODEL") or os.getenv("GEMINI_REALTIME_MODEL")
+    if not model:
+        model = (
+            "gemini-live-2.5-flash-native-audio"
+            if use_vertexai
+            else "gemini-2.5-flash-native-audio-preview-12-2025"
+        )
+
+    voice = os.getenv("GOOGLE_REALTIME_VOICE", "Charon")
+    temperature = 0.6
+
+    if use_vertexai:
+        project = os.getenv("GOOGLE_CLOUD_PROJECT")
+        location = os.getenv("GOOGLE_CLOUD_LOCATION") or "us-central1"
+        return GoogleRealtimeSettings(
+            model=model,
+            voice=voice,
+            temperature=temperature,
+            vertexai=True,
+            project=project,
+            location=location,
+        )
+
+    api_key = _get_google_api_key()
+    if not api_key:
+        raise RuntimeError(
+            "Nenhuma credencial do Gemini foi encontrada. Defina GEMINI_API_KEY ou GOOGLE_API_KEY no arquivo .env."
+        )
+
+    return GoogleRealtimeSettings(
+        model=model,
+        voice=voice,
+        temperature=temperature,
+        vertexai=False,
+        api_key=api_key,
+    )
+
+
+def _validate_google_realtime_credentials() -> None:
+    settings = _get_google_realtime_settings()
+    if settings.vertexai:
+        return
+
+    api_key = settings.api_key
+    if not api_key:
+        raise RuntimeError(
+            "Nenhuma credencial do Gemini foi encontrada. Defina GEMINI_API_KEY ou GOOGLE_API_KEY no arquivo .env."
+        )
+
+    request = _urllib.Request(
+        f"https://generativelanguage.googleapis.com/v1beta/models?key={quote_plus(api_key)}"
+    )
+    try:
+        with _urllib.urlopen(request, timeout=5) as response:
+            if response.status != 200:
+                raise RuntimeError(
+                    "Nao foi possivel validar a chave do Gemini antes de iniciar a sessao."
+                )
+    except HTTPError as exc:
+        details = exc.read().decode("utf-8", errors="ignore")
+        details_lower = details.lower()
+        if "reported as leaked" in details_lower or "api key was reported as leaked" in details_lower:
+            raise RuntimeError(
+                "A chave do Gemini configurada foi bloqueada pelo Google por vazamento. Gere uma nova chave e salve em GEMINI_API_KEY ou GOOGLE_API_KEY no arquivo .env."
+            ) from exc
+        raise RuntimeError(
+            f"Falha ao validar a chave do Gemini ({exc.code}). Revise a credencial e o modelo configurado."
+        ) from exc
+    except URLError as exc:
+        raise RuntimeError(
+            "Nao foi possivel validar a conexao com a API do Gemini. Verifique sua internet e tente novamente."
+        ) from exc
 
 # ─────────────────────────────────────────
 # BRAVE + CDP
@@ -65,11 +174,11 @@ async def _abrir_brave_com_cdp(url: str = "about:blank"):
     # Se o Brave já está aberto COM cdp, só abre nova aba
     if _cdp_disponivel():
         try:
-            async with async_playwright() as p:
+            async with async_playwright() as p: # type: ignore
                 browser = await p.chromium.connect_over_cdp(CDP_URL)
                 page = await browser.contexts[0].new_page()
                 await page.goto(url)
-                await browser.disconnect()
+                await browser.disconnect() # type: ignore
             return True
         except:
             pass
@@ -85,14 +194,20 @@ async def _abrir_brave_com_cdp(url: str = "about:blank"):
 # AGENTE
 # ─────────────────────────────────────────
 
-class Assistant(Agent, llm.ToolContext):
-    def __init__(self, chat_ctx: ChatContext = None):
+class Assistant(Agent, llm.ToolContext): # type: ignore
+    def __init__(self, chat_ctx: ChatContext = None): # type: ignore
         llm.ToolContext.__init__(self, [])
+        realtime_settings = _get_google_realtime_settings()
         super().__init__(
             instructions=AGENT_INSTRUCTION,
             llm=google.beta.realtime.RealtimeModel(
-                voice="Charon",
-                temperature=0.6,
+                model=realtime_settings.model,
+                api_key=realtime_settings.api_key if realtime_settings.api_key is not None else NOT_GIVEN,
+                voice=realtime_settings.voice,
+                temperature=realtime_settings.temperature,
+                vertexai=realtime_settings.vertexai,
+                project=realtime_settings.project if realtime_settings.project is not None else NOT_GIVEN,
+                location=realtime_settings.location if realtime_settings.location is not None else NOT_GIVEN,
             ),
             chat_ctx=chat_ctx,
         )
@@ -153,7 +268,7 @@ class Assistant(Agent, llm.ToolContext):
 
             # Estratégia 2: CDP (só funciona se Chrome foi aberto com --remote-debugging-port)
             if PLAYWRIGHT_DISPONIVEL and _cdp_disponivel():
-                async with async_playwright() as p:
+                async with async_playwright() as p: # type: ignore
                     browser = await p.chromium.connect_over_cdp(CDP_URL)
                     for ctx in browser.contexts:
                         for page in ctx.pages:
@@ -161,9 +276,9 @@ class Assistant(Agent, llm.ToolContext):
                                 await page.evaluate(
                                     "const v = document.querySelector('video'); if(v) { v.paused ? v.play() : v.pause(); }"
                                 )
-                                await browser.disconnect()
+                                await browser.disconnect() # type: ignore
                                 return "Play/Pause alternado via CDP ✓"
-                    await browser.disconnect()
+                    await browser.disconnect() # type: ignore
                 return "Nenhum vídeo do YouTube encontrado no Chrome."
 
             return ("Não foi possível controlar o YouTube. "
@@ -249,6 +364,34 @@ class Assistant(Agent, llm.ToolContext):
         """Busca um arquivo por nome e o abre automaticamente."""
         return self.jarvis_control.buscar_e_abrir_arquivo(nome_arquivo)
 
+    @agents.function_tool
+    async def criar_ou_editar_arquivo(
+        self,
+        caminho: str,
+        modo: str = "w",
+        conteudo: str = "",
+        conteudo_base64: str | None = None,
+        encoding: str = "utf-8",
+    ):
+        """
+        Cria ou edita arquivos usando open() com with.
+
+        Use modos como:
+        - 'w' para criar ou sobrescrever arquivos de texto
+        - 'a' para adicionar conteúdo ao final
+        - 'r+' para editar um arquivo existente desde o início
+        - 'wb', 'ab' ou 'rb+' para arquivos binários
+
+        Para arquivos binários, envie o conteúdo em base64 no campo conteudo_base64.
+        """
+        return self.jarvis_control.criar_ou_editar_arquivo(
+            caminho=caminho,
+            modo=modo,
+            conteudo=conteudo,
+            conteudo_base64=conteudo_base64,
+            encoding=encoding,
+        )
+
     # ────────────────────────────────
     # SISTEMA
     # ────────────────────────────────
@@ -279,6 +422,8 @@ class Assistant(Agent, llm.ToolContext):
 # ─────────────────────────────────────────
 
 async def entrypoint(ctx: agents.JobContext):
+
+    _validate_google_realtime_credentials()
 
     mem0_client = AsyncMemoryClient()
     user_id = "GabrielGoulartdeSouza"
@@ -341,15 +486,15 @@ async def entrypoint(ctx: agents.JobContext):
     async def shutdown_hook():
         try:
             msgs = []
-            for item in session._agent.chat_ctx.items:
-                if not hasattr(item, "content") or not item.content:
+            for item in session._agent.chat_ctx.items: # type: ignore
+                if not hasattr(item, "content") or not item.content: # type: ignore
                     continue
-                if item.role not in ("user", "assistant"):
+                if item.role not in ("user", "assistant"): # type: ignore
                     continue
-                conteudo = "".join(item.content) if isinstance(item.content, list) else str(item.content)
+                conteudo = "".join(item.content) if isinstance(item.content, list) else str(item.content) # type: ignore
                 conteudo = conteudo.strip()
                 if conteudo:
-                    msgs.append({"role": item.role, "content": conteudo})
+                    msgs.append({"role": item.role, "content": conteudo}) # type: ignore
             if msgs:
                 await mem0_client.add(msgs, user_id=user_id)
                 logger.info(f"[Mem0] {len(msgs)} mensagens salvas na memória.")
