@@ -4,6 +4,10 @@ import webbrowser
 import zipfile
 import subprocess
 import base64
+import json
+from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 from ctypes import cast, POINTER
 from comtypes import CLSCTX_ALL
@@ -11,6 +15,7 @@ import screen_brightness_control as sbc
 
 class JarvisControl:
     def __init__(self):
+        self.project_dir = os.path.dirname(os.path.abspath(__file__))
         self.shortcuts = {
             "youtube": "https://www.youtube.com",
             "github": "https://www.github.com",
@@ -36,6 +41,321 @@ class JarvisControl:
         self.ignore_folders = {
             "venv", ".venv", "env", "node_modules", "__pycache__", ".git", ".idea", ".vscode"
         }
+        self.google_calendar_scopes = ["https://www.googleapis.com/auth/calendar"]
+
+    def _resolver_arquivo_projeto(self, caminho):
+        caminho = str(caminho).strip().strip('"\'')
+        if not caminho:
+            return ""
+
+        expandido = os.path.abspath(os.path.expanduser(caminho))
+        if os.path.isabs(caminho):
+            return expandido
+
+        candidato_projeto = os.path.abspath(os.path.join(self.project_dir, caminho))
+        if os.path.exists(candidato_projeto):
+            return candidato_projeto
+
+        return self._resolver_caminho(caminho)
+
+    def _calendar_timezone(self):
+        return os.getenv("GOOGLE_CALENDAR_TIMEZONE", "America/Sao_Paulo")
+
+    def _calendar_tzinfo(self):
+        timezone_name = self._calendar_timezone().strip() or "America/Sao_Paulo"
+        try:
+            return timezone_name, ZoneInfo(timezone_name)
+        except ZoneInfoNotFoundError:
+            fallback_offsets = {
+                "America/Sao_Paulo": -3,
+                "UTC": 0,
+                "Etc/UTC": 0,
+            }
+            if timezone_name in fallback_offsets:
+                offset_hours = fallback_offsets[timezone_name]
+                return timezone_name, timezone(timedelta(hours=offset_hours), name=timezone_name)
+
+            raise RuntimeError(
+                "Nao foi possivel carregar o fuso horario configurado para o Google Calendar. "
+                "Defina GOOGLE_CALENDAR_TIMEZONE com um valor valido ou instale o pacote tzdata no ambiente Python."
+            )
+
+    def _calendar_id(self, calendar_id=None):
+        return calendar_id or os.getenv("GOOGLE_CALENDAR_ID", "primary")
+
+    def _calendar_credentials_file(self):
+        configured = os.getenv("GOOGLE_CALENDAR_CREDENTIALS_FILE")
+        if configured:
+            return self._resolver_arquivo_projeto(configured)
+        return os.path.join(self.project_dir, "google_calendar_credentials.json")
+
+    def _calendar_token_file(self):
+        configured = os.getenv("GOOGLE_CALENDAR_TOKEN_FILE")
+        if configured:
+            return self._resolver_arquivo_projeto(configured)
+        return os.path.join(self.project_dir, "google_calendar_token.json")
+
+    def _calendar_service_account_file(self):
+        configured = os.getenv("GOOGLE_CALENDAR_SERVICE_ACCOUNT_FILE")
+        if configured:
+            return self._resolver_arquivo_projeto(configured)
+        return None
+
+    def _load_google_calendar_oauth_config(self, credentials_file):
+        try:
+            with open(credentials_file, "r", encoding="utf-8") as credentials_handle:
+                credentials_data = json.load(credentials_handle)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                f"O arquivo de credenciais do Google Calendar esta invalido: {credentials_file}. Gere um novo JSON de OAuth no Google Cloud Console."
+            ) from exc
+
+        installed_config = credentials_data.get("installed")
+        if installed_config:
+            return credentials_data, installed_config
+
+        if credentials_data.get("web"):
+            raise RuntimeError(
+                "O arquivo google_calendar_credentials.json esta usando um OAuth Client do tipo Web. "
+                "Para o Jarvis, gere um novo OAuth Client do tipo Desktop App no Google Cloud Console e substitua esse arquivo. "
+                "Se a tela de consentimento estiver em modo de teste, adicione sua conta em Test users antes de autenticar."
+            )
+
+        raise RuntimeError(
+            "O arquivo google_calendar_credentials.json nao contem uma configuracao OAuth valida. "
+            "Use um JSON de OAuth Client do tipo Desktop App."
+        )
+
+    def _calendar_oauth_runtime_config(self, installed_config):
+        redirect_uris = installed_config.get("redirect_uris") or []
+        localhost_uri = next(
+            (
+                uri for uri in redirect_uris
+                if isinstance(uri, str) and uri.startswith("http://localhost")
+            ),
+            None,
+        )
+
+        oauth_host = "localhost"
+        oauth_port = 0
+        oauth_redirect_trailing_slash = True
+
+        if localhost_uri:
+            parsed_uri = urlparse(localhost_uri)
+            oauth_host = parsed_uri.hostname or "localhost"
+            oauth_port = parsed_uri.port or 0
+            oauth_redirect_trailing_slash = localhost_uri.endswith("/")
+
+        return oauth_host, oauth_port, oauth_redirect_trailing_slash
+
+    def _build_google_calendar_oauth_error(self, error):
+        message = str(error)
+        normalized_message = message.lower()
+
+        if "access_denied" in normalized_message or "error 403" in normalized_message:
+            return (
+                "O Google bloqueou a autenticacao do Calendar. Confirme estes pontos no Google Cloud Console: "
+                "1) use um OAuth Client do tipo Desktop App; "
+                "2) a Google Calendar API precisa estar ativada; "
+                "3) se a tela de consentimento estiver em Testing, sua conta precisa estar cadastrada em Test users."
+            )
+
+        return f"Falha ao autenticar no Google Calendar: {message}"
+
+    def _parse_calendar_datetime(self, valor):
+        texto = str(valor).strip()
+        _, timezone_info = self._calendar_tzinfo()
+
+        if len(texto) == 10 and texto.count("-") == 2:
+            return datetime.fromisoformat(texto).date(), True
+
+        try:
+            instante = datetime.fromisoformat(texto)
+        except ValueError:
+            try:
+                from dateutil import parser as date_parser
+                instante = date_parser.parse(texto, dayfirst=True)
+            except Exception as exc:
+                raise ValueError(
+                    "Use data no formato YYYY-MM-DD ou data e hora como YYYY-MM-DD HH:MM."
+                ) from exc
+
+        if instante.tzinfo is None:
+            instante = instante.replace(tzinfo=timezone_info)
+
+        return instante.astimezone(timezone_info), False
+
+    def _format_calendar_event_datetime(self, valor):
+        if not isinstance(valor, datetime):
+            raise ValueError("Data e hora do evento invalidas para o Google Calendar.")
+
+        _, timezone_info = self._calendar_tzinfo()
+        return valor.astimezone(timezone_info).isoformat(timespec="seconds")
+
+    def _get_google_calendar_service(self):
+        try:
+            from google.auth.transport.requests import Request
+            from google.oauth2.credentials import Credentials
+            from google.oauth2.service_account import Credentials as ServiceAccountCredentials
+            from google_auth_oauthlib.flow import InstalledAppFlow
+            from googleapiclient.discovery import build
+        except ImportError as exc:
+            raise RuntimeError(
+                "Dependências do Google Calendar não instaladas. Instale google-api-python-client, google-auth-oauthlib e google-auth-httplib2."
+            ) from exc
+
+        service_account_file = self._calendar_service_account_file()
+        if service_account_file and os.path.exists(service_account_file):
+            creds = ServiceAccountCredentials.from_service_account_file(
+                service_account_file,
+                scopes=self.google_calendar_scopes,
+            )
+            return build("calendar", "v3", credentials=creds, cache_discovery=False)
+
+        credentials_file = self._calendar_credentials_file()
+        token_file = self._calendar_token_file()
+
+        if not os.path.exists(credentials_file):
+            raise RuntimeError(
+                f"Arquivo de credenciais do Google Calendar não encontrado em: {credentials_file}. Salve o OAuth client em google_calendar_credentials.json na pasta do projeto ou defina GOOGLE_CALENDAR_CREDENTIALS_FILE com o caminho correto."
+            )
+
+        _, installed_config = self._load_google_calendar_oauth_config(credentials_file)
+        oauth_host, oauth_port, oauth_redirect_trailing_slash = self._calendar_oauth_runtime_config(installed_config)
+
+        creds = None
+        if os.path.exists(token_file):
+            creds = Credentials.from_authorized_user_file(token_file, self.google_calendar_scopes)
+
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+            else:
+                flow = InstalledAppFlow.from_client_secrets_file(
+                    credentials_file,
+                    self.google_calendar_scopes,
+                )
+                try:
+                    creds = flow.run_local_server(
+                        host=oauth_host,
+                        port=oauth_port,
+                        redirect_uri_trailing_slash=oauth_redirect_trailing_slash,
+                        timeout_seconds=180,
+                    )
+                except Exception as exc:
+                    raise RuntimeError(self._build_google_calendar_oauth_error(exc)) from exc
+
+            with open(token_file, "w", encoding="utf-8") as token_handle:
+                token_handle.write(creds.to_json())
+
+        return build("calendar", "v3", credentials=creds, cache_discovery=False)
+
+    def autenticar_google_calendar(self):
+        try:
+            self._get_google_calendar_service()
+            return "Google Calendar autenticado com sucesso."
+        except Exception as e:
+            return f"Erro ao autenticar Google Calendar: {str(e)}"
+
+    def agendar_evento_google_calendar(
+        self,
+        titulo,
+        inicio,
+        fim=None,
+        descricao="",
+        local="",
+        dia_inteiro=False,
+        lembrete_minutos=30,
+        calendar_id=None,
+    ):
+        try:
+            service = self._get_google_calendar_service()
+            inicio_parseado, inicio_eh_data = self._parse_calendar_datetime(inicio)
+            dia_inteiro = bool(dia_inteiro or inicio_eh_data)
+
+            if fim:
+                fim_parseado, _ = self._parse_calendar_datetime(fim)
+            elif dia_inteiro:
+                fim_parseado = inicio_parseado + timedelta(days=1)
+            else:
+                fim_parseado = inicio_parseado + timedelta(hours=1)
+
+            evento = {
+                "summary": str(titulo).strip(),
+                "description": str(descricao).strip(),
+                "location": str(local).strip(),
+                "reminders": {
+                    "useDefault": False,
+                    "overrides": [{"method": "popup", "minutes": max(0, int(lembrete_minutos))}],
+                },
+            }
+
+            _, timezone_info = self._calendar_tzinfo()
+            if dia_inteiro:
+                evento["start"] = {"date": inicio_parseado.isoformat()}
+                evento["end"] = {"date": fim_parseado.isoformat()}
+            else:
+                evento["start"] = {
+                    "dateTime": self._format_calendar_event_datetime(inicio_parseado),
+                }
+                evento["end"] = {
+                    "dateTime": self._format_calendar_event_datetime(fim_parseado),
+                }
+
+            criado = service.events().insert(calendarId=self._calendar_id(calendar_id), body=evento).execute()
+            link = criado.get("htmlLink", "")
+            return f"Evento criado com sucesso: {criado.get('summary', titulo)} | ID: {criado.get('id')} | Link: {link}"
+        except Exception as e:
+            return f"Erro ao criar evento no Google Calendar: {str(e)}"
+
+    def listar_eventos_google_calendar(self, inicio=None, fim=None, limite=10, calendar_id=None):
+        try:
+            service = self._get_google_calendar_service()
+            _, timezone_info = self._calendar_tzinfo()
+            agora = datetime.now(timezone_info)
+            time_min = agora.isoformat()
+            time_max = None
+
+            if inicio:
+                inicio_parseado, inicio_eh_data = self._parse_calendar_datetime(inicio)
+                if inicio_eh_data:
+                    inicio_parseado = datetime.combine(inicio_parseado, datetime.min.time(), tzinfo=timezone_info)
+                time_min = inicio_parseado.isoformat()
+
+            if fim:
+                fim_parseado, fim_eh_data = self._parse_calendar_datetime(fim)
+                if fim_eh_data:
+                    fim_parseado = datetime.combine(fim_parseado, datetime.max.time(), tzinfo=timezone_info)
+                time_max = fim_parseado.isoformat()
+
+            consulta = service.events().list(
+                calendarId=self._calendar_id(calendar_id),
+                timeMin=time_min,
+                timeMax=time_max,
+                maxResults=max(1, int(limite)),
+                singleEvents=True,
+                orderBy="startTime",
+            )
+            eventos = consulta.execute().get("items", [])
+
+            if not eventos:
+                return "Nenhum evento encontrado no intervalo informado."
+
+            linhas = []
+            for evento in eventos:
+                inicio_evento = evento.get("start", {}).get("dateTime") or evento.get("start", {}).get("date")
+                linhas.append(f"- {evento.get('summary', '(sem título)')} | {inicio_evento} | ID: {evento.get('id')}")
+            return "\n".join(linhas)
+        except Exception as e:
+            return f"Erro ao listar eventos do Google Calendar: {str(e)}"
+
+    def remover_evento_google_calendar(self, evento_id, calendar_id=None):
+        try:
+            service = self._get_google_calendar_service()
+            service.events().delete(calendarId=self._calendar_id(calendar_id), eventId=str(evento_id).strip()).execute()
+            return f"Evento removido com sucesso: {evento_id}"
+        except Exception as e:
+            return f"Erro ao remover evento do Google Calendar: {str(e)}"
 
     def _resolver_caminho(self, caminho):
         """Traduz apelidos (como 'Área de Trabalho') para caminhos reais e garante caminhos absolutos."""

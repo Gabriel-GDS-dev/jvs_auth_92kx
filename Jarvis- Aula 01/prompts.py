@@ -71,6 +71,12 @@ Quando o usuário pedir para fazer algo, CHAME A FERRAMENTA correspondente IMEDI
 - abrir_programa(comando): abre um executável (ex: 'notepad', 'calc').
 - abrir_aplicativo(nome_app): abre apps conhecidos.
 
+## Agenda
+- **autenticar_google_calendar()**: autentica o acesso ao Google Calendar quando necessário.
+- **agendar_no_google_calendar(titulo, inicio, fim, descricao, local, dia_inteiro, lembrete_minutos)**: cria eventos e lembretes.
+- **listar_eventos_google_calendar(inicio, fim, limite)**: lista compromissos e entregas futuras.
+- **remover_evento_google_calendar(evento_id)**: remove um evento pelo ID.
+
 ## Sistema
 - controle_volume(nivel) / controle_brilho(nivel): ajuste de 0 a 100. Você pode usar termos como "aumentar", "diminuir", "máximo", "mínimo" ou valores específicos em porcentagem.
 - energia_pc(acao): 'desligar', 'reiniciar', 'bloquear'.

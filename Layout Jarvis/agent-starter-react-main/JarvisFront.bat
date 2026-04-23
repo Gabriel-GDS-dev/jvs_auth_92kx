@@ -14,6 +14,18 @@ echo ----------------------------
 echo Iniciando Frontend Jarvis
 echo ----------------------------
 
+if exist ".next" (
+	echo Limpando cache antigo do Next.js...
+	rmdir /s /q ".next"
+	if exist ".next" (
+		echo.
+		echo ERRO: nao foi possivel limpar a pasta .next.
+		echo Feche terminais/processos do frontend e tente novamente.
+		pause
+		exit /b 1
+	)
+)
+
 if not exist "node_modules" (
 	echo Instalando dependências...
 	call pnpm install

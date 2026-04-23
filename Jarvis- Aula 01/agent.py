@@ -140,6 +140,14 @@ def _validate_google_realtime_credentials() -> None:
             "Nao foi possivel validar a conexao com a API do Gemini. Verifique sua internet e tente novamente."
         ) from exc
 
+
+def _validate_startup_configuration() -> None:
+    try:
+        _validate_google_realtime_credentials()
+    except RuntimeError as exc:
+        logger.error(str(exc))
+        raise SystemExit(1) from exc
+
 # ─────────────────────────────────────────
 # BRAVE + CDP
 # ─────────────────────────────────────────
@@ -364,6 +372,57 @@ class Assistant(Agent, llm.ToolContext): # type: ignore
         """Busca um arquivo por nome e o abre automaticamente."""
         return self.jarvis_control.buscar_e_abrir_arquivo(nome_arquivo)
 
+    # ────────────────────────────────
+    # AGENDA
+    # ────────────────────────────────
+
+    @agents.function_tool
+    async def autenticar_google_calendar(self):
+        """Autentica o Google Calendar usando OAuth local ou service account configurada no ambiente."""
+        return self.jarvis_control.autenticar_google_calendar()
+
+    @agents.function_tool
+    async def agendar_no_google_calendar(
+        self,
+        titulo: str,
+        inicio: str,
+        fim: str = "",
+        descricao: str = "",
+        local: str = "",
+        dia_inteiro: bool = False,
+        lembrete_minutos: int = 30,
+    ):
+        """
+        Cria um evento no Google Calendar.
+
+        Exemplos:
+        - dia inteiro: inicio='2026-12-25', dia_inteiro=True
+        - com horário: inicio='2026-05-10 14:00', fim='2026-05-10 15:30'
+        """
+        return self.jarvis_control.agendar_evento_google_calendar(
+            titulo=titulo,
+            inicio=inicio,
+            fim=fim or None,
+            descricao=descricao,
+            local=local,
+            dia_inteiro=dia_inteiro,
+            lembrete_minutos=lembrete_minutos,
+        )
+
+    @agents.function_tool
+    async def listar_eventos_google_calendar(self, inicio: str = "", fim: str = "", limite: int = 10):
+        """Lista eventos futuros do Google Calendar, com filtro opcional por intervalo."""
+        return self.jarvis_control.listar_eventos_google_calendar(
+            inicio=inicio or None,
+            fim=fim or None,
+            limite=limite,
+        )
+
+    @agents.function_tool
+    async def remover_evento_google_calendar(self, evento_id: str):
+        """Remove um evento do Google Calendar pelo ID retornado na listagem ou criação."""
+        return self.jarvis_control.remover_evento_google_calendar(evento_id)
+
     @agents.function_tool
     async def criar_ou_editar_arquivo(
         self,
@@ -422,8 +481,6 @@ class Assistant(Agent, llm.ToolContext): # type: ignore
 # ─────────────────────────────────────────
 
 async def entrypoint(ctx: agents.JobContext):
-
-    _validate_google_realtime_credentials()
 
     mem0_client = AsyncMemoryClient()
     user_id = "GabrielGoulartdeSouza"
@@ -509,4 +566,5 @@ async def entrypoint(ctx: agents.JobContext):
 
 
 if __name__ == "__main__":
+    _validate_startup_configuration()
     agents.cli.run_app(agents.WorkerOptions(entrypoint_fnc=entrypoint))
