@@ -19,6 +19,17 @@ export interface AppConfig {
 
   // LiveKit Cloud Sandbox configuration
   sandboxId?: string;
+
+  // audio visualizer configuration
+  audioVisualizerType?: 'aura' | 'bar' | 'grid' | 'radial' | 'wave' | 'rafael';
+  audioVisualizerColor?: string;
+  audioVisualizerAuraColorShift?: number;
+  audioVisualizerBarCount?: number;
+  audioVisualizerGridRowCount?: number;
+  audioVisualizerGridColumnCount?: number;
+  audioVisualizerRadialBarCount?: number;
+  audioVisualizerRadialRadius?: number;
+  audioVisualizerWaveLineWidth?: number;
 }
 
 export const APP_CONFIG_DEFAULTS: AppConfig = {
@@ -42,4 +53,8 @@ export const APP_CONFIG_DEFAULTS: AppConfig = {
 
   // LiveKit Cloud Sandbox configuration
   sandboxId: undefined,
+
+  // audio visualizer configuration
+  audioVisualizerType: 'rafael',
+  audioVisualizerColor: '#00AEEF',
 };

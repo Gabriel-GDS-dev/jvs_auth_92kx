@@ -52,12 +52,12 @@ async def entrypoint(ctx: agents.JobContext):
 
         logging.info(f"Formatted messages to add to memory: {messages_formatted}")
         # Assuming user_id is consistent
-        await mem0.add(messages_formatted, user_id="PedroLucas")
+        await mem0.add(messages_formatted, user_id="GabrielGoulartdeSouza")
         logging.info("Chat context saved to memory.")
 
     # Initialize Memory Client
     mem0 = AsyncMemoryClient()
-    user_id = "PedroLucas"
+    user_id = "GabrielGoulartdeSouza"
 
     # Load existing memories - try get_all first, fallback to search
     initial_ctx = ChatContext()

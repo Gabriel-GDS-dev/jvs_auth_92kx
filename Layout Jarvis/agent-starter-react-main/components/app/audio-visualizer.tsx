@@ -1,21 +1,28 @@
+import dynamic from 'next/dynamic';
 import { type MotionProps, motion } from 'motion/react';
 import { useVoiceAssistant } from '@livekit/components-react';
 import { AppConfig } from '@/app-config';
-import { AgentAudioVisualizerAura } from '@/components/agents-ui/agent-audio-visualizer-aura';
-import {
-  AgentAudioVisualizerBar,
-  AgentAudioVisualizerBarElementVariants,
-} from '@/components/agents-ui/agent-audio-visualizer-bar';
-import { AgentAudioVisualizerGrid } from '@/components/agents-ui/agent-audio-visualizer-grid';
-import { AgentAudioVisualizerRadial } from '@/components/agents-ui/agent-audio-visualizer-radial';
-import { AgentAudioVisualizerWave } from '@/components/agents-ui/agent-audio-visualizer-wave';
 import { cn } from '@/lib/shadcn/utils';
+import { AgentAudioVisualizerBarElementVariants } from '@/components/agents-ui/agent-audio-visualizer-bar';
 
-const MotionAgentAudioVisualizerAura = motion.create(AgentAudioVisualizerAura);
-const MotionAgentAudioVisualizerBar = motion.create(AgentAudioVisualizerBar);
-const MotionAgentAudioVisualizerGrid = motion.create(AgentAudioVisualizerGrid);
-const MotionAgentAudioVisualizerRadial = motion.create(AgentAudioVisualizerRadial);
-const MotionAgentAudioVisualizerWave = motion.create(AgentAudioVisualizerWave);
+const MotionAgentAudioVisualizerAura = motion.create(
+  dynamic(() => import('@/components/agents-ui/agent-audio-visualizer-aura').then(mod => mod.AgentAudioVisualizerAura), { ssr: false })
+);
+const MotionAgentAudioVisualizerBar = motion.create(
+  dynamic(() => import('@/components/agents-ui/agent-audio-visualizer-bar').then(mod => mod.AgentAudioVisualizerBar), { ssr: false })
+);
+const MotionAgentAudioVisualizerGrid = motion.create(
+  dynamic(() => import('@/components/agents-ui/agent-audio-visualizer-grid').then(mod => mod.AgentAudioVisualizerGrid), { ssr: false })
+);
+const MotionAgentAudioVisualizerRadial = motion.create(
+  dynamic(() => import('@/components/agents-ui/agent-audio-visualizer-radial').then(mod => mod.AgentAudioVisualizerRadial), { ssr: false })
+);
+const MotionAgentAudioVisualizerWave = motion.create(
+  dynamic(() => import('@/components/agents-ui/agent-audio-visualizer-wave').then(mod => mod.AgentAudioVisualizerWave), { ssr: false })
+);
+const MotionAgentAudioVisualizerRafael = motion.create(
+  dynamic(() => import('@/components/agents-ui/agent-audio-visualizer-rafael').then(mod => mod.AgentAudioVisualizerRafael), { ssr: false })
+);
 
 interface AudioVisualizerProps extends MotionProps {
   appConfig: AppConfig;
@@ -33,6 +40,18 @@ export function AudioVisualizer({
   const { state, audioTrack } = useVoiceAssistant();
 
   switch (audioVisualizerType) {
+    case 'rafael': {
+      const { audioVisualizerColor } = appConfig;
+      return (
+        <MotionAgentAudioVisualizerRafael
+          state={state}
+          audioTrack={audioTrack}
+          color={audioVisualizerColor}
+          className={cn('size-full', className)}
+          {...props}
+        />
+      );
+    }
     case 'aura': {
       const { audioVisualizerColor, audioVisualizerAuraColorShift } = appConfig;
       return (

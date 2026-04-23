@@ -281,7 +281,7 @@ class Assistant(Agent, llm.ToolContext):
 async def entrypoint(ctx: agents.JobContext):
 
     mem0_client = AsyncMemoryClient()
-    user_id = "PedroLucas"
+    user_id = "GabrielGoulartdeSouza"
 
     await ctx.connect()
 
