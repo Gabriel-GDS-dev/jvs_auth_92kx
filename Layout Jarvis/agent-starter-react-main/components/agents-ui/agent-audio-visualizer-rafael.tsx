@@ -3,7 +3,7 @@
 import React, { type ComponentProps, useMemo } from 'react';
 import { type VariantProps, cva } from 'class-variance-authority';
 import { type LocalAudioTrack, type RemoteAudioTrack } from 'livekit-client';
-import { type AgentState, type TrackReferenceOrPlaceholder, useTrackVolume } from '@livekit/components-react';
+import { type AgentState, type TrackReference, useTrackVolume } from '@livekit/components-react';
 import { ReactShaderToy } from '@/components/agents-ui/react-shader-toy';
 import { cn } from '@/lib/shadcn/utils';
 
@@ -164,7 +164,7 @@ export interface AgentAudioVisualizerRafaelProps {
   size?: 'icon' | 'sm' | 'md' | 'lg' | 'xl';
   state?: AgentState;
   color?: string;
-  audioTrack?: LocalAudioTrack | RemoteAudioTrack | TrackReferenceOrPlaceholder;
+  audioTrack?: LocalAudioTrack | RemoteAudioTrack | TrackReference;
 }
 
 export function AgentAudioVisualizerRafael({

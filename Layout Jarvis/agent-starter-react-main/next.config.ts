@@ -11,6 +11,14 @@ const nextConfig: NextConfig = {
   },
   // Desabilitar source maps em produção para economizar memória se necessário
   productionBrowserSourceMaps: false,
+  webpack: (config, { dev }) => {
+    if (dev) {
+      // OneDrive can interfere with webpack's on-disk cache writes.
+      config.cache = false;
+    }
+
+    return config;
+  },
 };
 
 export default nextConfig;

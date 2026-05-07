@@ -104,6 +104,7 @@ export const SessionView = ({
 }: React.ComponentProps<'section'> & SessionViewProps) => {
   const session = useSessionContext();
   const { messages } = useSessionMessages(session);
+  const { state: agentState } = useVoiceAssistant();
   const [chatOpen, setChatOpen] = useState(false);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
 
@@ -121,12 +122,10 @@ export const SessionView = ({
   };
 
   useEffect(() => {
-    const lastMessage = messages.at(-1);
-    const lastMessageIsLocal = lastMessage?.from?.isLocal === true;
-    if (scrollAreaRef.current && lastMessageIsLocal) {
+    if (scrollAreaRef.current) {
       scrollAreaRef.current.scrollTop = scrollAreaRef.current.scrollHeight;
     }
-  }, [messages]);
+  }, [messages, agentState]);
 
   const handleDisconnect = () => {
     if (onManualDisconnect) onManualDisconnect();
@@ -172,6 +171,77 @@ export const SessionView = ({
         <div className="relative z-10 w-full h-full">
           <TileLayout chatOpen={chatOpen} />
         </div>
+
+        {/* Chat Overlay (Top Right, Transparent, Fade Out at Top) */}
+        <div 
+          ref={scrollAreaRef}
+          className="absolute top-8 right-8 z-30 w-80 md:w-96 max-h-[60vh] flex flex-col gap-4 overflow-y-auto pointer-events-none scrollbar-hide"
+          style={{
+            maskImage: 'linear-gradient(to bottom, transparent 0%, black 20%, black 100%)',
+            WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, black 20%, black 100%)',
+            scrollbarWidth: 'none'
+          }}
+        >
+          <div className="flex flex-col gap-4 min-h-full justify-end pb-4 pt-12">
+            <AnimatePresence>
+              {messages.map((msg) => {
+                const isLocal = msg.from?.isLocal;
+                return (
+                  <motion.div 
+                    key={msg.id}
+                    initial={{ opacity: 0, x: 20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    className={cn(
+                      "text-base md:text-lg font-medium py-1 px-3 max-w-[95%] break-words",
+                      isLocal ? "self-end text-right" : "self-start text-left"
+                    )}
+                    style={{
+                      color: currentColor,
+                      textShadow: `0 0 10px ${currentColor}80`,
+                      borderLeft: !isLocal ? `2px solid ${currentColor}` : 'none',
+                      borderRight: isLocal ? `2px solid ${currentColor}` : 'none',
+                    }}
+                  >
+                    <span className="opacity-60 text-xs block mb-1 uppercase tracking-widest font-mono">
+                      {isLocal ? 'Você' : agentPersona}
+                    </span>
+                    {msg.message}
+                  </motion.div>
+                );
+              })}
+              
+              {messages.length === 0 && appConfig.isPreConnectBufferEnabled && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="self-end text-right py-1 px-3 text-sm font-medium opacity-60 italic"
+                  style={{ color: currentColor, textShadow: `0 0 10px ${currentColor}80` }}
+                >
+                  <span className="block mb-1 uppercase tracking-widest font-mono text-[10px]">
+                    Sistema
+                  </span>
+                  O Jarvis está ouvindo, pode falar...
+                </motion.div>
+              )}
+
+              {/* Thinking Indicator */}
+              {agentState === 'thinking' && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="self-start text-left py-1 px-3 text-sm font-medium font-mono"
+                  style={{ 
+                    color: currentColor, 
+                    textShadow: `0 0 10px ${currentColor}80`,
+                    borderLeft: `2px solid ${currentColor}`
+                  }}
+                >
+                  <span className="animate-pulse opacity-80">Processando...</span>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        </div>
       </div>
 
       <div className="flex-1 pointer-events-none" />
@@ -180,23 +250,7 @@ export const SessionView = ({
         {...BOTTOM_VIEW_MOTION_PROPS}
         className="relative z-10 mx-auto mb-4 w-full max-w-3xl px-3"
       >
-        {appConfig.isPreConnectBufferEnabled && (
-          <AnimatePresence>
-            {messages.length === 0 && (
-              <MotionMessage
-                key="pre-connect-message"
-                duration={2}
-                aria-hidden={messages.length > 0}
-                {...SHIMMER_MOTION_PROPS}
-                className="pointer-events-none mx-auto block w-full max-w-2xl pb-8 text-center text-sm font-semibold"
-              >
-                O Jarvis está ouvindo, pode falar...
-              </MotionMessage>
-            )}
-          </AnimatePresence>
-        )}
-
-        <div className="relative mx-auto max-w-2xl pb-3 md:pb-12 bg-transparent">
+        <div className="relative mx-auto max-w-2xl pb-3 md:pb-12 bg-transparent pointer-events-auto">
           <AgentControlBar
             variant="livekit"
             controls={controls}
