@@ -1,0 +1,12 @@
+{
+  "venvPath": "./Jarvis- Aula 01",
+  "venv": "venv",
+  "extraPaths": [
+    "./Jarvis- Aula 01",
+    "./Aula automacao/Controle_PC",
+    "./Jarvis Mem0"
+  ],
+  "typeCheckingMode": "basic",
+  "reportMissingImports": "none",
+  "reportMissingModuleSource": "none"
+}

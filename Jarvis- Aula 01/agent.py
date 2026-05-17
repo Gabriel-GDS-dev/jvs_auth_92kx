@@ -1,6 +1,14 @@
+# pyright: reportMissingImports=false, reportMissingModuleSource=false
 from dotenv import load_dotenv
 from livekit import agents
-from livekit.agents import AgentSession, Agent, RoomInputOptions, ChatContext, llm, NOT_GIVEN
+from livekit.agents import (
+    APIConnectOptions,
+    AgentSession,
+    Agent,
+    ChatContext,
+    NOT_GIVEN,
+    room_io,
+)
 from livekit.plugins import noise_cancellation, google
 from prompts import AGENT_INSTRUCTION, SESSION_INSTRUCTION
 from mem0 import AsyncMemoryClient
@@ -9,6 +17,7 @@ import os
 import asyncio
 import webbrowser
 import subprocess
+from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote_plus
 import urllib.request as _urllib
@@ -27,7 +36,8 @@ except ImportError:
 
 from automacao_jarvis import JarvisControl
 
-load_dotenv()
+PROJECT_DIR = Path(__file__).resolve().parent
+load_dotenv(PROJECT_DIR / ".env")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -40,6 +50,9 @@ class GoogleRealtimeSettings:
         model: str,
         voice: str,
         temperature: float,
+        timeout: float,
+        max_retries: int,
+        transcription_enabled: bool,
         vertexai: bool,
         api_key: str | None = None,
         project: str | None = None,
@@ -48,6 +61,9 @@ class GoogleRealtimeSettings:
         self.model = model
         self.voice = voice
         self.temperature = temperature
+        self.timeout = timeout
+        self.max_retries = max_retries
+        self.transcription_enabled = transcription_enabled
         self.vertexai = vertexai
         self.api_key = api_key
         self.project = project
@@ -61,8 +77,26 @@ def _env_flag(name: str, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+
+
 def _get_google_api_key() -> str | None:
     return os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+
+
+def _jarvis_video_enabled() -> bool:
+    return _env_flag("JARVIS_VIDEO_ENABLED", True)
 
 
 def _get_google_realtime_settings() -> GoogleRealtimeSettings:
@@ -72,11 +106,14 @@ def _get_google_realtime_settings() -> GoogleRealtimeSettings:
         model = (
             "gemini-live-2.5-flash-native-audio"
             if use_vertexai
-            else "gemini-2.5-flash-native-audio-preview-12-2025"
+            else "gemini-3.1-flash-live-preview"
         )
 
     voice = os.getenv("GOOGLE_REALTIME_VOICE", "Charon")
     temperature = 0.6
+    timeout = _env_float("GOOGLE_REALTIME_TIMEOUT", 30.0)
+    max_retries = _env_int("GOOGLE_REALTIME_MAX_RETRIES", 8)
+    transcription_enabled = _env_flag("GOOGLE_REALTIME_TRANSCRIPTION_ENABLED", False)
 
     if use_vertexai:
         project = os.getenv("GOOGLE_CLOUD_PROJECT")
@@ -85,6 +122,9 @@ def _get_google_realtime_settings() -> GoogleRealtimeSettings:
             model=model,
             voice=voice,
             temperature=temperature,
+            timeout=timeout,
+            max_retries=max_retries,
+            transcription_enabled=transcription_enabled,
             vertexai=True,
             project=project,
             location=location,
@@ -100,6 +140,9 @@ def _get_google_realtime_settings() -> GoogleRealtimeSettings:
         model=model,
         voice=voice,
         temperature=temperature,
+        timeout=timeout,
+        max_retries=max_retries,
+        transcription_enabled=transcription_enabled,
         vertexai=False,
         api_key=api_key,
     )
@@ -171,7 +214,7 @@ def _cdp_disponivel() -> bool:
     try:
         with _urllib.urlopen(f"{CDP_URL}/json/version", timeout=1) as r:
             return r.status == 200
-    except:
+    except Exception:
         return False
 
 async def _abrir_brave_com_cdp(url: str = "about:blank"):
@@ -180,16 +223,17 @@ async def _abrir_brave_com_cdp(url: str = "about:blank"):
         webbrowser.open(url)
         return False
     # Se o Brave já está aberto COM cdp, só abre nova aba
-    if _cdp_disponivel():
+    if PLAYWRIGHT_DISPONIVEL and _cdp_disponivel():
         try:
             async with async_playwright() as p: # type: ignore
                 browser = await p.chromium.connect_over_cdp(CDP_URL)
-                page = await browser.contexts[0].new_page()
+                context = browser.contexts[0] if browser.contexts else await browser.new_context()
+                page = await context.new_page()
                 await page.goto(url)
                 await browser.disconnect() # type: ignore
             return True
-        except:
-            pass
+        except Exception as exc:
+            logger.debug("Falha ao reaproveitar Brave via CDP: %s", exc)
     # Fecha o Brave e reabre com depuração
    # subprocess.run(["taskkill", "/f", "/im", "brave.exe"], capture_output=True)
     await asyncio.sleep(1)
@@ -202,9 +246,8 @@ async def _abrir_brave_com_cdp(url: str = "about:blank"):
 # AGENTE
 # ─────────────────────────────────────────
 
-class Assistant(Agent, llm.ToolContext): # type: ignore
-    def __init__(self, chat_ctx: ChatContext = None): # type: ignore
-        llm.ToolContext.__init__(self, [])
+class Assistant(Agent):
+    def __init__(self, chat_ctx: ChatContext | None = None):
         realtime_settings = _get_google_realtime_settings()
         super().__init__(
             instructions=AGENT_INSTRUCTION,
@@ -216,6 +259,18 @@ class Assistant(Agent, llm.ToolContext): # type: ignore
                 vertexai=realtime_settings.vertexai,
                 project=realtime_settings.project if realtime_settings.project is not None else NOT_GIVEN,
                 location=realtime_settings.location if realtime_settings.location is not None else NOT_GIVEN,
+                input_audio_transcription=NOT_GIVEN
+                if realtime_settings.transcription_enabled
+                else None,
+                output_audio_transcription=NOT_GIVEN
+                if realtime_settings.transcription_enabled
+                else None,
+                api_version=os.getenv("GOOGLE_REALTIME_API_VERSION", "v1alpha"),
+                conn_options=APIConnectOptions(
+                    max_retry=max(1, realtime_settings.max_retries),
+                    retry_interval=2.0,
+                    timeout=max(10.0, realtime_settings.timeout),
+                ),
             ),
             chat_ctx=chat_ctx,
         )
@@ -489,13 +544,20 @@ async def entrypoint(ctx: agents.JobContext):
 
     session = AgentSession()
     agent = Assistant(chat_ctx=ChatContext())
+    video_enabled = _jarvis_video_enabled()
+    logger.info(
+        "Entrada de video LiveKit %s.",
+        "ativada" if video_enabled else "desativada por padrao",
+    )
 
     await session.start(
         room=ctx.room,
         agent=agent,
-        room_input_options=RoomInputOptions(
-            video_enabled=True,
-            noise_cancellation=noise_cancellation.BVC(),
+        room_options=room_io.RoomOptions(
+            audio_input=room_io.AudioInputOptions(
+                noise_cancellation=noise_cancellation.BVC(),
+            ),
+            video_input=video_enabled,
         ),
     )
 
@@ -543,7 +605,7 @@ async def entrypoint(ctx: agents.JobContext):
     async def shutdown_hook():
         try:
             msgs = []
-            for item in session._agent.chat_ctx.items: # type: ignore
+            for item in agent.chat_ctx.items:
                 if not hasattr(item, "content") or not item.content: # type: ignore
                     continue
                 if item.role not in ("user", "assistant"): # type: ignore
@@ -567,4 +629,9 @@ async def entrypoint(ctx: agents.JobContext):
 
 if __name__ == "__main__":
     _validate_startup_configuration()
-    agents.cli.run_app(agents.WorkerOptions(entrypoint_fnc=entrypoint))
+    agents.cli.run_app(
+        agents.WorkerOptions(
+            entrypoint_fnc=entrypoint,
+            ws_url=os.getenv("LIVEKIT_URL"),  # garante que usa a URL do .env
+        )
+    )

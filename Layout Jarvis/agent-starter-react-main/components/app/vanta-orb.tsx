@@ -2,30 +2,57 @@
 
 import React, { useEffect, useRef } from 'react';
 
+type VantaEffect = {
+  destroy: () => void;
+};
+
+type VantaFactory = (options: {
+  el: HTMLDivElement;
+  p5: unknown;
+  mouseControls: boolean;
+  touchControls: boolean;
+  gyroControls: boolean;
+  minHeight: number;
+  minWidth: number;
+  scale: number;
+  scaleMobile: number;
+  color: number;
+  backgroundColor: number;
+  spacing: number;
+  chaos: number;
+}) => VantaEffect;
+
+type VantaWindow = Window & {
+  VANTA?: {
+    TRUNK?: VantaFactory;
+  };
+  p5?: unknown;
+};
+
 interface VantaOrbProps {
   isConnected: boolean;
   color: number;
-  vantaRef: React.MutableRefObject<any>;
+  vantaRef: React.MutableRefObject<VantaEffect | null>;
 }
 
 export const VantaOrb = ({ isConnected, color, vantaRef }: VantaOrbProps) => {
   const localRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    let vantaEffect: any = null;
+    let vantaEffect: VantaEffect | null = null;
     let attempts = 0;
-    let initTimer: NodeJS.Timeout;
+    let initTimer: ReturnType<typeof setTimeout> | undefined;
 
     const tryInitVanta = () => {
       const el = localRef.current;
-      const win = window as any;
+      const win = window as VantaWindow;
       const hasVanta = !!win.VANTA?.TRUNK;
       const hasP5 = !!win.p5;
 
       if (el && hasVanta && hasP5) {
         try {
-          vantaEffect = win.VANTA.TRUNK({
-            el: el,
+          vantaEffect = win.VANTA!.TRUNK!({
+            el,
             p5: win.p5,
             mouseControls: false,
             touchControls: false,
@@ -61,7 +88,9 @@ export const VantaOrb = ({ isConnected, color, vantaRef }: VantaOrbProps) => {
             vantaRef.current = null;
           }
           vantaEffect.destroy();
-        } catch (e) { }
+        } catch (error) {
+          console.error('Vanta Orb Cleanup Error:', error);
+        }
       }
     };
   }, [isConnected, color, vantaRef]);
@@ -69,7 +98,7 @@ export const VantaOrb = ({ isConnected, color, vantaRef }: VantaOrbProps) => {
   return (
     <div
       ref={localRef}
-      className="w-[1000px] h-[1000px]"
+      className="h-[1000px] w-[1000px]"
       style={{
         transform: 'scale(0.5) translateY(-15%)',
         transformOrigin: 'center center',

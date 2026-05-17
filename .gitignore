@@ -1,3 +1,14 @@
 Jarvis- Aula 01/google_calendar_credentials.json
 Jarvis- Aula 01/google_calendar_token.json
 Jarvis- Aula 01/__pycache__/
+
+# Local secrets
+.env
+.env.local
+**/.env
+**/.env.local
+
+# Generated Python files
+__pycache__/
+**/__pycache__/
+*.py[cod]

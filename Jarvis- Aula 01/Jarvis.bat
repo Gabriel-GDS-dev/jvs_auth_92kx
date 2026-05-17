@@ -1,6 +1,6 @@
 @echo off
 setlocal
-title Jarvis - Dev Mode
+title Jarvis
 cd /d "%~dp0"
 
 if not exist "venv\Scripts\activate.bat" (
@@ -20,10 +20,10 @@ if %errorlevel% neq 0 (
 )
 
 echo ----------------------------
-echo Iniciando Jarvis em modo DEV
+echo Iniciando Jarvis
 echo ----------------------------
 
-call python agent.py dev
+call python agent.py start
 
 if %errorlevel% neq 0 (
     echo.

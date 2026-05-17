@@ -1,68 +1,98 @@
+from __future__ import annotations
+
+import json
+import logging
+from pathlib import Path
+
 from dotenv import load_dotenv
 from mem0 import MemoryClient
-import logging
-import json
-import os
 
-# Configuração básica
-load_dotenv()
+
+def _load_env_files() -> None:
+    current_dir = Path(__file__).resolve().parent
+    load_dotenv(current_dir / ".env")
+
+    for parent in current_dir.parents:
+        shared_env = parent / "Jarvis- Aula 01" / ".env"
+        if shared_env.exists():
+            load_dotenv(shared_env, override=False)
+            break
+
+
+_load_env_files()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
 class JarvisMemory:
-    def __init__(self, user_name="PedroLucas"):
+    def __init__(self, user_name: str = "PedroLucas"):
         self.user_name = user_name
-        # O MemoryClient busca a MEM0_API_KEY automaticamente do seu .env
         self.client = MemoryClient()
 
-    def salvar_conversa(self):
-        """Simula o envio de mensagens para a memória do Mem0"""
-        print(f"\n🚀 Enviando novas memórias para: {self.user_name}...")
-        
+    def salvar_conversa(self) -> None:
+        """Envia mensagens de teste para a memoria do Mem0."""
+        print(f"\nEnviando novas memorias para: {self.user_name}...")
+
         messages = [
             {"role": "user", "content": "Ultimamente estou escutando muito Alee."},
-            {"role": "assistant", "content": "Ótima escolha! Qual sua música favorita dele?"},
-            {"role": "user", "content": "Minha favorita é Tempo do ouro e minha cor preferida é Preto."},
+            {"role": "assistant", "content": "Otima escolha! Qual sua musica favorita dele?"},
+            {
+                "role": "user",
+                "content": "Minha favorita e Tempo do ouro e minha cor preferida e preto.",
+            },
         ]
 
-        # O método add extrai os fatos e salva no banco de dados
         self.client.add(messages, user_id=self.user_name)
-        print("✅ Informações processadas e salvas com sucesso!")
+        print("Informacoes processadas e salvas com sucesso!")
 
-    def buscar_memorias(self):
-        """Recupera as informações que o Jarvis aprendeu"""
-        print(f"\n🧠 Jarvis, o que você lembra sobre {self.user_name}?")
-        
-        query = f"Quais são as preferências e gostos de {self.user_name}?"
-        
-        # Na v2, usamos o dicionário filters
+    def buscar_memorias(self) -> list[dict[str, str | None]]:
+        """Recupera as informacoes que o Jarvis aprendeu."""
+        print(f"\nJarvis, o que voce lembra sobre {self.user_name}?")
+
+        query = f"Quais sao as preferencias e gostos de {self.user_name}?"
         response = self.client.search(query, filters={"user_id": self.user_name})
-
-        # Tratamento da estrutura de resposta (lista ou dicionário)
-        results = response["results"] if isinstance(response, dict) and "results" in response else response
+        results = self._extrair_resultados(response)
 
         memories_list = []
         for item in results:
-            if isinstance(item, dict):
-                memories_list.append({
-                    "fato": item.get("memory"),
-                    "data": item.get("updated_at")
-                })
-        
+            if not isinstance(item, dict):
+                continue
+
+            memory = item.get("memory") or item.get("text") or item.get("content")
+            if memory:
+                updated_at = item.get("updated_at")
+                memories_list.append(
+                    {
+                        "fato": str(memory),
+                        "data": str(updated_at) if updated_at is not None else None,
+                    }
+                )
+
         return memories_list
 
-# --- EXECUÇÃO ---
+    @staticmethod
+    def _extrair_resultados(response: object) -> list[object]:
+        if isinstance(response, dict):
+            results = response.get("results", [])
+        elif isinstance(response, list):
+            results = response
+        else:
+            results = []
+
+        return results if isinstance(results, list) else []
+
+
 if __name__ == "__main__":
     brain = JarvisMemory("PedroLucas")
 
-    # 1. Primeiro enviamos a informação (Comente essa linha se já enviou uma vez e quer só testar a busca)
-    brain.salvar_conversa()
+    try:
+        brain.salvar_conversa()
+        historico = brain.buscar_memorias()
+    except Exception as exc:
+        logger.error("Erro ao testar memoria: %s", exc)
+        raise SystemExit(1) from exc
 
-    # 2. Depois buscamos o que foi aprendido
-    historico = brain.buscar_memorias()
-
-    # Exibição organizada
     if historico:
         print(json.dumps(historico, indent=2, ensure_ascii=False))
     else:
-        print("❌ Nenhuma memória encontrada para este usuário.")
+        print("Nenhuma memoria encontrada para este usuario.")

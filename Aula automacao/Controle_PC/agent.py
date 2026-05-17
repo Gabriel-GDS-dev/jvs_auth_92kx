@@ -1,6 +1,14 @@
+# pyright: reportMissingImports=false, reportMissingModuleSource=false
 from dotenv import load_dotenv
 from livekit import agents
-from livekit.agents import AgentSession, Agent, RoomInputOptions, ChatContext, llm
+from livekit.agents import (
+    APIConnectOptions,
+    AgentSession,
+    Agent,
+    ChatContext,
+    NOT_GIVEN,
+    room_io,
+)
 from livekit.plugins import noise_cancellation, google
 from prompts import AGENT_INSTRUCTION, SESSION_INSTRUCTION
 from mem0 import AsyncMemoryClient
@@ -9,6 +17,7 @@ import os
 import asyncio
 import webbrowser
 import subprocess
+from pathlib import Path
 from urllib.parse import quote_plus
 import urllib.request as _urllib
 
@@ -26,7 +35,56 @@ except ImportError:
 
 from automacao_jarvis import JarvisControl
 
-load_dotenv()
+PROJECT_DIR = Path(__file__).resolve().parent
+
+
+def _load_env_files() -> None:
+    load_dotenv(PROJECT_DIR / ".env")
+    for parent in PROJECT_DIR.parents:
+        shared_env = parent / "Jarvis- Aula 01" / ".env"
+        if shared_env.exists():
+            load_dotenv(shared_env, override=False)
+            break
+
+
+def _get_google_api_key() -> str | None:
+    return os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+
+
+def _jarvis_video_enabled() -> bool:
+    return _env_flag("JARVIS_VIDEO_ENABLED", True)
+
+
+def _get_google_realtime_model() -> str:
+    return (
+        os.getenv("GOOGLE_REALTIME_MODEL")
+        or os.getenv("GEMINI_REALTIME_MODEL")
+        or "gemini-3.1-flash-live-preview"
+    )
+
+
+_load_env_files()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -54,7 +112,7 @@ def _cdp_disponivel() -> bool:
     try:
         with _urllib.urlopen(f"{CDP_URL}/json/version", timeout=1) as r:
             return r.status == 200
-    except:
+    except Exception:
         return False
 
 async def _abrir_chrome_com_cdp(url: str = "about:blank"):
@@ -63,16 +121,17 @@ async def _abrir_chrome_com_cdp(url: str = "about:blank"):
         webbrowser.open(url)
         return False
     # Se o Chrome já está aberto COM cdp, só abre nova aba
-    if _cdp_disponivel():
+    if PLAYWRIGHT_DISPONIVEL and _cdp_disponivel():
         try:
             async with async_playwright() as p:
                 browser = await p.chromium.connect_over_cdp(CDP_URL)
-                page = await browser.contexts[0].new_page()
+                context = browser.contexts[0] if browser.contexts else await browser.new_context()
+                page = await context.new_page()
                 await page.goto(url)
-                await browser.disconnect()
+                await browser.disconnect() # type: ignore
             return True
-        except:
-            pass
+        except Exception as exc:
+            logger.debug("Falha ao reaproveitar Chrome via CDP: %s", exc)
     # Fecha o Chrome e reabre com depuração
    # subprocess.run(["taskkill", "/f", "/im", "chrome.exe"], capture_output=True)
     await asyncio.sleep(1)
@@ -85,14 +144,27 @@ async def _abrir_chrome_com_cdp(url: str = "about:blank"):
 # AGENTE
 # ─────────────────────────────────────────
 
-class Assistant(Agent, llm.ToolContext):
-    def __init__(self, chat_ctx: ChatContext = None):
-        llm.ToolContext.__init__(self, [])
+class Assistant(Agent):
+    def __init__(self, chat_ctx: ChatContext | None = None):
         super().__init__(
             instructions=AGENT_INSTRUCTION,
             llm=google.beta.realtime.RealtimeModel(
-                voice="Charon",
+                model=_get_google_realtime_model(),
+                api_key=_get_google_api_key() or NOT_GIVEN,
+                voice=os.getenv("GOOGLE_REALTIME_VOICE", "Charon"),
                 temperature=0.6,
+                input_audio_transcription=NOT_GIVEN
+                if _env_flag("GOOGLE_REALTIME_TRANSCRIPTION_ENABLED", False)
+                else None,
+                output_audio_transcription=NOT_GIVEN
+                if _env_flag("GOOGLE_REALTIME_TRANSCRIPTION_ENABLED", False)
+                else None,
+                api_version=os.getenv("GOOGLE_REALTIME_API_VERSION", "v1alpha"),
+                conn_options=APIConnectOptions(
+                    max_retry=max(1, _env_int("GOOGLE_REALTIME_MAX_RETRIES", 8)),
+                    retry_interval=2.0,
+                    timeout=max(10.0, _env_float("GOOGLE_REALTIME_TIMEOUT", 30.0)),
+                ),
             ),
             chat_ctx=chat_ctx,
         )
@@ -161,9 +233,9 @@ class Assistant(Agent, llm.ToolContext):
                                 await page.evaluate(
                                     "const v = document.querySelector('video'); if(v) { v.paused ? v.play() : v.pause(); }"
                                 )
-                                await browser.disconnect()
+                                await browser.disconnect() # type: ignore
                                 return "Play/Pause alternado via CDP ✓"
-                    await browser.disconnect()
+                    await browser.disconnect() # type: ignore
                 return "Nenhum vídeo do YouTube encontrado no Chrome."
 
             return ("Não foi possível controlar o YouTube. "
@@ -249,6 +321,157 @@ class Assistant(Agent, llm.ToolContext):
         """Busca um arquivo por nome e o abre automaticamente."""
         return self.jarvis_control.buscar_e_abrir_arquivo(nome_arquivo)
 
+    @agents.function_tool
+    async def criar_ou_editar_arquivo(
+        self,
+        caminho: str,
+        modo: str = "w",
+        conteudo: str = "",
+        conteudo_base64: str | None = None,
+        encoding: str = "utf-8",
+    ):
+        """Cria ou edita arquivos de texto ou binarios. Use conteudo_base64 para binarios."""
+        return self.jarvis_control.criar_ou_editar_arquivo(
+            caminho=caminho,
+            modo=modo,
+            conteudo=conteudo,
+            conteudo_base64=conteudo_base64,
+            encoding=encoding,
+        )
+
+    @agents.function_tool
+    async def capturar_tela(self):
+        """Captura um screenshot da tela atual e salva na pasta runtime do Jarvis."""
+        return self.jarvis_control.capturar_tela() # type: ignore
+
+    @agents.function_tool
+    async def analisar_tela(self, pergunta: str = ""):
+        """Analisa visualmente a tela atual usando Gemini Vision, quando configurado."""
+        return self.jarvis_control.analisar_tela(pergunta) # type: ignore
+
+    @agents.function_tool
+    async def escrever_na_tela(
+        self,
+        texto: str,
+        limpar_campo: bool = False,
+        pressionar_enter: bool = False,
+    ):
+        """Digita ou cola texto na janela ativa, util para Notion, Word, sites e apps abertos."""
+        return self.jarvis_control.escrever_na_tela(texto, limpar_campo, pressionar_enter) # type: ignore
+
+    @agents.function_tool
+    async def pressionar_teclas(self, teclas: str):
+        """Pressiona uma tecla ou atalho, por exemplo: 'ctrl+s', 'tab', 'enter'."""
+        return self.jarvis_control.pressionar_teclas(teclas) # type: ignore
+
+    @agents.function_tool
+    async def clicar_na_tela(self, x: int, y: int, duplo: bool = False):
+        """Clica nas coordenadas da tela. Use depois de analisar_tela quando necessario."""
+        return self.jarvis_control.clicar_na_tela(x, y, duplo) # type: ignore
+
+    @agents.function_tool
+    async def abrir_site(self, url: str):
+        """Abre um site no Chrome com depuracao remota quando possivel."""
+        await _abrir_chrome_com_cdp(url)
+        return f"Abrindo site: {url}"
+
+    @agents.function_tool
+    async def interagir_site(
+        self,
+        acao: str,
+        seletor: str = "",
+        texto: str = "",
+        url: str = "",
+        tecla: str = "Enter",
+    ):
+        """
+        Interage com sites abertos no Chrome via seletor CSS quando possivel.
+        Acoes: clicar, digitar, ler, tecla. Sem seletor, usa a janela ativa.
+        """
+        try:
+            if url:
+                await _abrir_chrome_com_cdp(url)
+
+            acao_normalizada = acao.strip().lower()
+            if PLAYWRIGHT_DISPONIVEL and _cdp_disponivel() and seletor:
+                async with async_playwright() as p:
+                    browser = await p.chromium.connect_over_cdp(CDP_URL)
+                    context = browser.contexts[0] if browser.contexts else await browser.new_context()
+                    page = context.pages[-1] if context.pages else await context.new_page()
+                    locator = page.locator(seletor).first() # type: ignore
+
+                    if acao_normalizada in {"clicar", "click"}:
+                        await locator.click()
+                        await browser.disconnect() # type: ignore
+                        return f"Clique executado no seletor: {seletor}"
+
+                    if acao_normalizada in {"digitar", "escrever", "preencher"}:
+                        await locator.click()
+                        await page.keyboard.press("Control+A")
+                        await page.keyboard.insert_text(texto)
+                        await browser.disconnect() # type: ignore
+                        return f"Texto escrito no seletor: {seletor}"
+
+                    if acao_normalizada in {"ler", "texto", "extrair"}:
+                        conteudo = await locator.inner_text(timeout=5000)
+                        await browser.disconnect() # type: ignore
+                        return conteudo[:3000] or "Elemento encontrado, mas sem texto visivel."
+
+                    if acao_normalizada in {"tecla", "pressionar"}:
+                        await locator.click()
+                        await page.keyboard.press(tecla)
+                        await browser.disconnect() # type: ignore
+                        return f"Tecla enviada para o seletor {seletor}: {tecla}"
+
+                    await browser.disconnect() # type: ignore
+                    return "Acao invalida. Use clicar, digitar, ler ou tecla."
+
+            if acao_normalizada in {"digitar", "escrever", "preencher"}:
+                return self.jarvis_control.escrever_na_tela(texto) # type: ignore
+            if acao_normalizada in {"tecla", "pressionar"}:
+                return self.jarvis_control.pressionar_teclas(tecla) # type: ignore
+            return (
+                "Para clicar ou ler por seletor, abra o Chrome pelo Jarvis e informe um seletor CSS. "
+                "Para interacao visual, use analisar_tela, clicar_na_tela e escrever_na_tela."
+            )
+        except Exception as e:
+            return f"Erro ao interagir com site: {e}"
+
+    @agents.function_tool
+    async def obsidian_criar_nota(self, titulo: str, conteudo: str = "", pasta: str = ""):
+        """Cria uma nota Markdown dentro do vault do Obsidian."""
+        return self.jarvis_control.obsidian_criar_nota(titulo, conteudo, pasta) # type: ignore
+
+    @agents.function_tool
+    async def obsidian_adicionar_em_nota(self, titulo: str, conteudo: str, pasta: str = ""):
+        """Adiciona conteudo ao final de uma nota do Obsidian."""
+        return self.jarvis_control.obsidian_adicionar_em_nota(titulo, conteudo, pasta) # type: ignore
+
+    @agents.function_tool
+    async def obsidian_buscar_notas(self, termo: str, limite: int = 10):
+        """Busca notas no vault do Obsidian por titulo ou conteudo."""
+        return self.jarvis_control.obsidian_buscar_notas(termo, limite) # type: ignore
+
+    @agents.function_tool
+    async def obsidian_abrir_nota(self, titulo: str, pasta: str = ""):
+        """Abre uma nota do Obsidian."""
+        return self.jarvis_control.obsidian_abrir_nota(titulo, pasta) # type: ignore
+
+    @agents.function_tool
+    async def notion_abrir(self):
+        """Abre o Notion no navegador."""
+        return self.jarvis_control.notion_abrir() # type: ignore
+
+    @agents.function_tool
+    async def notion_criar_pagina(self, titulo: str, conteudo: str = "", parent_page_id: str = ""):
+        """Cria pagina no Notion via API, ou abre o Notion e digita se a API nao estiver configurada."""
+        return self.jarvis_control.notion_criar_pagina(titulo, conteudo, parent_page_id) # type: ignore
+
+    @agents.function_tool
+    async def word_criar_documento(self, titulo: str, conteudo: str = "", caminho: str = ""):
+        """Cria um arquivo .docx e abre no Word."""
+        return self.jarvis_control.word_criar_documento(titulo, conteudo, caminho) # type: ignore
+
     # ────────────────────────────────
     # SISTEMA
     # ────────────────────────────────
@@ -287,13 +510,20 @@ async def entrypoint(ctx: agents.JobContext):
 
     session = AgentSession()
     agent = Assistant(chat_ctx=ChatContext())
+    video_enabled = _jarvis_video_enabled()
+    logger.info(
+        "Entrada de video LiveKit %s.",
+        "ativada" if video_enabled else "desativada por padrao",
+    )
 
     await session.start(
         room=ctx.room,
         agent=agent,
-        room_input_options=RoomInputOptions(
-            video_enabled=True,
-            noise_cancellation=noise_cancellation.BVC(),
+        room_options=room_io.RoomOptions(
+            audio_input=room_io.AudioInputOptions(
+                noise_cancellation=noise_cancellation.BVC(),
+            ),
+            video_input=video_enabled,
         ),
     )
 
@@ -341,15 +571,15 @@ async def entrypoint(ctx: agents.JobContext):
     async def shutdown_hook():
         try:
             msgs = []
-            for item in session._agent.chat_ctx.items:
-                if not hasattr(item, "content") or not item.content:
+            for item in agent.chat_ctx.items:
+                if not hasattr(item, "content") or not item.content: # type: ignore
                     continue
-                if item.role not in ("user", "assistant"):
+                if item.role not in ("user", "assistant"): # type: ignore
                     continue
-                conteudo = "".join(item.content) if isinstance(item.content, list) else str(item.content)
+                conteudo = "".join(item.content) if isinstance(item.content, list) else str(item.content) # type: ignore
                 conteudo = conteudo.strip()
                 if conteudo:
-                    msgs.append({"role": item.role, "content": conteudo})
+                    msgs.append({"role": item.role, "content": conteudo}) # type: ignore
             if msgs:
                 await mem0_client.add(msgs, user_id=user_id)
                 logger.info(f"[Mem0] {len(msgs)} mensagens salvas na memória.")
@@ -364,4 +594,12 @@ async def entrypoint(ctx: agents.JobContext):
 
 
 if __name__ == "__main__":
-    agents.cli.run_app(agents.WorkerOptions(entrypoint_fnc=entrypoint))
+    agents.cli.run_app(
+        agents.WorkerOptions(
+            entrypoint_fnc=entrypoint,
+            ws_url=os.getenv("LIVEKIT_URL"),
+            api_key=os.getenv("LIVEKIT_API_KEY"),
+            api_secret=os.getenv("LIVEKIT_API_SECRET"),
+            agent_name=os.getenv("AGENT_NAME", ""),
+        )
+    )

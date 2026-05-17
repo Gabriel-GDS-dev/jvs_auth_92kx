@@ -1,25 +1,53 @@
+# pyright: reportMissingImports=false, reportMissingModuleSource=false
 from dotenv import load_dotenv
 from livekit import agents
-from livekit.agents import AgentSession, Agent, RoomInputOptions, ChatContext
+from livekit.agents import AgentSession, Agent, RoomInputOptions, ChatContext, NOT_GIVEN
 from livekit.plugins import noise_cancellation, google
 from prompts import AGENT_INSTRUCTION, SESSION_INSTRUCTION
 from mem0 import AsyncMemoryClient
 import logging
 import os
 import json
+from pathlib import Path
 
-load_dotenv()
+PROJECT_DIR = Path(__file__).resolve().parent
+
+
+def _load_env_files() -> None:
+    load_dotenv(PROJECT_DIR / ".env")
+    for parent in PROJECT_DIR.parents:
+        shared_env = parent / "Jarvis- Aula 01" / ".env"
+        if shared_env.exists():
+            load_dotenv(shared_env, override=False)
+            break
+
+
+def _get_google_api_key() -> str | None:
+    return os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+
+
+def _get_google_realtime_model() -> str:
+    return (
+        os.getenv("GOOGLE_REALTIME_MODEL")
+        or os.getenv("GEMINI_REALTIME_MODEL")
+        or "gemini-2.5-flash-native-audio-preview-12-2025"
+    )
+
+
+_load_env_files()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
 class Assistant(Agent):
-    def __init__(self, chat_ctx: ChatContext = None):
+    def __init__(self, chat_ctx: ChatContext | None = None):
         super().__init__(
 
             instructions=AGENT_INSTRUCTION,
             llm=google.beta.realtime.RealtimeModel(
+                model=_get_google_realtime_model(),
+                api_key=_get_google_api_key() or NOT_GIVEN,
                 voice="Charon",
                 temperature=0.6,
             ),
@@ -37,16 +65,16 @@ async def entrypoint(ctx: agents.JobContext):
         logging.info(f"Chat context messages: {chat_ctx.items}")
 
         for item in chat_ctx.items:
-            if not hasattr(item, 'content') or item.content is None:
+            if not hasattr(item, 'content') or item.content is None: # type: ignore
               continue
-            content_str = ''.join(item.content) if isinstance(item.content, list) else str(item.content)
+            content_str = ''.join(item.content) if isinstance(item.content, list) else str(item.content) # type: ignore
 
             if memory_str and memory_str in content_str:
                 continue
 
-            if item.role in ['user', 'assistant']:
+            if item.role in ['user', 'assistant']: # type: ignore
                 messages_formatted.append({
-                    "role": item.role,
+                    "role": item.role, # type: ignore
                     "content": content_str.strip()
                 })
 
@@ -80,14 +108,21 @@ async def entrypoint(ctx: agents.JobContext):
             results = []
 
     if results:
-        memories = [
-            {
-                "memory": result.get("memory") if isinstance(result, dict) else result.get("memory", ""),
-                "updated_at": result.get("updated_at") if isinstance(result, dict) else result.get("updated_at", "")
-            }
-            for result in results
-            if isinstance(result, dict) and result.get("memory")
-        ]
+        memories = []
+        for result in results:
+            if not isinstance(result, dict):
+                continue
+
+            memory = result.get("memory") or result.get("text") or result.get("content")
+            if not memory:
+                continue
+
+            memories.append(
+                {
+                    "memory": str(memory),
+                    "updated_at": str(result.get("updated_at", "")),
+                }
+            )
         
         if memories:
             memory_str = json.dumps(memories, ensure_ascii=False)
@@ -114,8 +149,10 @@ async def entrypoint(ctx: agents.JobContext):
         ),
     )
 
-    # Use a shutdown callback to capture the context at the end
-    ctx.add_shutdown_callback(lambda: shutdown_hook(session._agent.chat_ctx, mem0, memory_str))
+    async def shutdown_callback():
+        await shutdown_hook(agent.chat_ctx, mem0, memory_str)
+
+    ctx.add_shutdown_callback(shutdown_callback)
 
     await session.generate_reply(
         instructions=SESSION_INSTRUCTION  + "\nCumprimente o usuário de forma breve e confiante."

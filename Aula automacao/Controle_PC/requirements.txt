@@ -16,3 +16,6 @@ playwright
 yt-dlp
 pygetwindow
 pyautogui
+requests
+Pillow
+google-genai

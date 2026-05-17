@@ -1,3 +1,4 @@
+/* eslint-disable @next/next/no-img-element */
 import { headers } from 'next/headers';
 import { ImageResponse } from 'next/og';
 import getImageSize from 'buffer-image-size';
