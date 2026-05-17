@@ -8,6 +8,7 @@ duckduckgo-search
 langchain_community
 ddgs
 requests
+msal
 python-dotenv
 pycaw
 comtypes

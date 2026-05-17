@@ -36,6 +36,16 @@ Use essas ferramentas para interagir com Notion, Word, sites e outros apps quand
 - abrir_site abre uma URL no Chrome.
 - interagir_site usa seletor CSS quando possivel; se nao houver seletor, use analisar_tela, clicar_na_tela e escrever_na_tela.
 
+## OneDrive
+- onedrive_autenticar inicia login Microsoft por codigo de dispositivo.
+- onedrive_listar lista arquivos e pastas da raiz ou de uma pasta.
+- onedrive_criar_pasta cria pasta.
+- onedrive_criar_arquivo cria ou atualiza arquivo de texto.
+- onedrive_ler_arquivo le arquivo de texto.
+- onedrive_deletar_item deleta arquivo ou pasta; use confirmar=True somente quando o usuario pedir explicitamente.
+- onedrive_enviar_arquivo e onedrive_baixar_arquivo movem arquivos entre PC e OneDrive.
+- onedrive_renomear_item e onedrive_buscar renomeiam e buscam itens.
+
 ## Obsidian
 - obsidian_criar_nota cria nota Markdown no vault.
 - obsidian_adicionar_em_nota acrescenta conteudo.

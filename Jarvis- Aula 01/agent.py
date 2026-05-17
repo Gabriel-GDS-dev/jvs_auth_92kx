@@ -511,6 +511,61 @@ class Assistant(Agent):
     # ────────────────────────────────
 
     @agents.function_tool
+    async def onedrive_autenticar(self):
+        """Autentica o OneDrive via Microsoft Graph usando device code."""
+        return self.jarvis_control.onedrive_autenticar()
+
+    @agents.function_tool
+    async def onedrive_listar(self, pasta: str = "", limite: int = 50):
+        """Lista arquivos e pastas do OneDrive. Use pasta vazia para a raiz."""
+        return self.jarvis_control.onedrive_listar(pasta, limite)
+
+    @agents.function_tool
+    async def onedrive_criar_pasta(self, nome: str, pasta_pai: str = ""):
+        """Cria uma pasta no OneDrive dentro da pasta informada ou na raiz."""
+        return self.jarvis_control.onedrive_criar_pasta(nome, pasta_pai)
+
+    @agents.function_tool
+    async def onedrive_criar_arquivo(
+        self,
+        caminho: str,
+        conteudo: str = "",
+        sobrescrever: bool = True,
+    ):
+        """Cria ou atualiza um arquivo de texto no OneDrive."""
+        return self.jarvis_control.onedrive_criar_arquivo(caminho, conteudo, sobrescrever)
+
+    @agents.function_tool
+    async def onedrive_ler_arquivo(self, caminho: str, limite_caracteres: int = 8000):
+        """Le um arquivo de texto do OneDrive."""
+        return self.jarvis_control.onedrive_ler_arquivo(caminho, limite_caracteres)
+
+    @agents.function_tool
+    async def onedrive_deletar_item(self, caminho: str, confirmar: bool = False):
+        """Deleta arquivo ou pasta do OneDrive. Use confirmar=True somente quando o usuario pedir explicitamente."""
+        return self.jarvis_control.onedrive_deletar_item(caminho, confirmar)
+
+    @agents.function_tool
+    async def onedrive_baixar_arquivo(self, caminho_onedrive: str, caminho_local: str = ""):
+        """Baixa um arquivo do OneDrive para o computador."""
+        return self.jarvis_control.onedrive_baixar_arquivo(caminho_onedrive, caminho_local)
+
+    @agents.function_tool
+    async def onedrive_enviar_arquivo(self, caminho_local: str, destino_onedrive: str = ""):
+        """Envia um arquivo local para o OneDrive."""
+        return self.jarvis_control.onedrive_enviar_arquivo(caminho_local, destino_onedrive)
+
+    @agents.function_tool
+    async def onedrive_renomear_item(self, caminho: str, novo_nome: str):
+        """Renomeia arquivo ou pasta no OneDrive."""
+        return self.jarvis_control.onedrive_renomear_item(caminho, novo_nome)
+
+    @agents.function_tool
+    async def onedrive_buscar(self, termo: str, limite: int = 20):
+        """Busca arquivos e pastas no OneDrive por nome ou conteudo indexado."""
+        return self.jarvis_control.onedrive_buscar(termo, limite)
+
+    @agents.function_tool
     async def controle_volume(self, nivel: int):
         """Ajusta o volume do sistema de 0 a 100."""
         return self.jarvis_control.controle_volume(nivel)

@@ -74,6 +74,16 @@ Quando o usuário pedir para fazer algo, CHAME A FERRAMENTA correspondente IMEDI
 - abrir_programa(comando): abre um executável (ex: 'notepad', 'calc').
 - abrir_aplicativo(nome_app): abre apps conhecidos.
 
+## OneDrive
+- onedrive_autenticar: inicia login Microsoft por codigo de dispositivo.
+- onedrive_listar: lista arquivos e pastas da raiz ou de uma pasta.
+- onedrive_criar_pasta: cria pasta no OneDrive.
+- onedrive_criar_arquivo: cria ou atualiza arquivo de texto.
+- onedrive_ler_arquivo: le arquivo de texto.
+- onedrive_deletar_item: deleta arquivo ou pasta; use confirmar=True somente se o usuario pediu explicitamente.
+- onedrive_enviar_arquivo / onedrive_baixar_arquivo: envia e baixa arquivos entre PC e OneDrive.
+- onedrive_renomear_item / onedrive_buscar: renomeia e busca itens.
+
 ## Agenda
 - **autenticar_google_calendar()**: autentica o acesso ao Google Calendar quando necessário.
 - **agendar_no_google_calendar(titulo, inicio, fim, descricao, local, dia_inteiro, lembrete_minutos)**: cria eventos e lembretes.

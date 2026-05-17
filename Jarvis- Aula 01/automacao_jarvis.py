@@ -5,13 +5,22 @@ import webbrowser
 import subprocess
 import base64
 import json
+import sys
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 from ctypes import cast, POINTER
 from comtypes import CLSCTX_ALL
 import screen_brightness_control as sbc
+
+for _parent in Path(__file__).resolve().parents:
+    if (_parent / "onedrive_jarvis.py").exists():
+        sys.path.insert(0, str(_parent))
+        break
+
+from onedrive_jarvis import OneDriveService
 
 
 def _abrir_caminho(caminho):
@@ -36,6 +45,7 @@ class JarvisControl:
         self.desktop = os.path.join(self.home, 'Desktop')
         self.documents = os.path.join(self.home, 'Documents')
         self.downloads = os.path.join(self.home, 'Downloads')
+        self.onedrive = OneDriveService(self.project_dir, self.downloads)
         self.base_folders = {
             "area de trabalho": self.desktop,
             "área de trabalho": self.desktop,
@@ -595,6 +605,70 @@ class JarvisControl:
             return f"Arquivo não encontrado para edição: {path_abs}"
         except Exception as e:
             return f"Erro ao criar/editar arquivo: {str(e)}"
+
+    # --- OneDrive / Microsoft Graph ---
+
+    def onedrive_autenticar(self):
+        try:
+            return self.onedrive.autenticar()
+        except Exception as e:
+            return f"Erro ao autenticar OneDrive: {str(e)}"
+
+    def onedrive_listar(self, pasta="", limite=50):
+        try:
+            return self.onedrive.listar(pasta, limite)
+        except Exception as e:
+            return f"Erro ao listar OneDrive: {str(e)}"
+
+    def onedrive_criar_pasta(self, nome, pasta_pai=""):
+        try:
+            return self.onedrive.criar_pasta(nome, pasta_pai)
+        except Exception as e:
+            return f"Erro ao criar pasta no OneDrive: {str(e)}"
+
+    def onedrive_criar_arquivo(self, caminho, conteudo="", sobrescrever=True):
+        try:
+            return self.onedrive.criar_arquivo(caminho, conteudo, sobrescrever)
+        except Exception as e:
+            return f"Erro ao criar arquivo no OneDrive: {str(e)}"
+
+    def onedrive_ler_arquivo(self, caminho, limite_caracteres=8000):
+        try:
+            return self.onedrive.ler_arquivo(caminho, limite_caracteres)
+        except Exception as e:
+            return f"Erro ao ler arquivo do OneDrive: {str(e)}"
+
+    def onedrive_deletar_item(self, caminho, confirmar=False):
+        try:
+            return self.onedrive.deletar_item(caminho, confirmar)
+        except Exception as e:
+            return f"Erro ao deletar item do OneDrive: {str(e)}"
+
+    def onedrive_baixar_arquivo(self, caminho_onedrive, caminho_local=""):
+        try:
+            caminho_destino = self._resolver_caminho(caminho_local) if caminho_local else ""
+            return self.onedrive.baixar_arquivo(caminho_onedrive, caminho_destino)
+        except Exception as e:
+            return f"Erro ao baixar arquivo do OneDrive: {str(e)}"
+
+    def onedrive_enviar_arquivo(self, caminho_local, destino_onedrive=""):
+        try:
+            caminho_origem = self._resolver_caminho(caminho_local)
+            return self.onedrive.enviar_arquivo(caminho_origem, destino_onedrive)
+        except Exception as e:
+            return f"Erro ao enviar arquivo para o OneDrive: {str(e)}"
+
+    def onedrive_renomear_item(self, caminho, novo_nome):
+        try:
+            return self.onedrive.renomear_item(caminho, novo_nome)
+        except Exception as e:
+            return f"Erro ao renomear item no OneDrive: {str(e)}"
+
+    def onedrive_buscar(self, termo, limite=20):
+        try:
+            return self.onedrive.buscar(termo, limite)
+        except Exception as e:
+            return f"Erro ao buscar no OneDrive: {str(e)}"
 
     # --- Controle de Sistema ---
 
