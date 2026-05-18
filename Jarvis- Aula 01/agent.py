@@ -337,6 +337,7 @@ async def _abrir_brave_com_cdp(url: str = "about:blank"):
 class Assistant(Agent):
     def __init__(self, chat_ctx: ChatContext | None = None):
         realtime_settings = _get_google_realtime_settings()
+        api_version = (os.getenv("GOOGLE_REALTIME_API_VERSION") or "").strip()
         super().__init__(
             instructions=AGENT_INSTRUCTION,
             llm=google.beta.realtime.RealtimeModel(
@@ -353,7 +354,7 @@ class Assistant(Agent):
                 output_audio_transcription=NOT_GIVEN
                 if realtime_settings.transcription_enabled
                 else None,
-                api_version=os.getenv("GOOGLE_REALTIME_API_VERSION", "v1alpha"),
+                api_version=api_version if api_version else NOT_GIVEN,
                 conn_options=APIConnectOptions(
                     max_retry=max(1, realtime_settings.max_retries),
                     retry_interval=2.0,
@@ -674,13 +675,37 @@ class Assistant(Agent):
         return self.jarvis_control.abrir_aplicativo(nome_app)
 
 
+class _DisabledMemoryClient:
+    disabled = True
+
+    async def search(self, *args, **kwargs):
+        return []
+
+    async def add(self, *args, **kwargs):
+        return None
+
+
+def _create_mem0_client():
+    if not (os.getenv("MEM0_API_KEY") or "").strip():
+        logger.warning("[Mem0] MEM0_API_KEY nao definida; memoria de longo prazo desativada.")
+        return _DisabledMemoryClient()
+
+    try:
+        client = AsyncMemoryClient()
+        setattr(client, "disabled", False)
+        return client
+    except Exception as e:
+        logger.warning(f"[Mem0] Memoria de longo prazo desativada: {e}")
+        return _DisabledMemoryClient()
+
+
 # ─────────────────────────────────────────
 # ENTRYPOINT
 # ─────────────────────────────────────────
 
 async def entrypoint(ctx: agents.JobContext):
 
-    mem0_client = AsyncMemoryClient()
+    mem0_client = _create_mem0_client()
     user_id = "GabrielGoulartdeSouza"
 
     await ctx.connect()
@@ -747,6 +772,9 @@ async def entrypoint(ctx: agents.JobContext):
 
     # ── Salvar Memória ao Desligar ───────────────────────
     async def shutdown_hook():
+        if getattr(mem0_client, "disabled", False):
+            return
+
         try:
             msgs = []
             save_limit = max(1, min(_env_int("MEM0_SAVE_LIMIT", 20), 50))

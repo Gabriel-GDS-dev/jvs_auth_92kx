@@ -41,15 +41,22 @@ export function AgentChatTranscript({
   return (
     <Conversation className={className} {...props}>
       <ConversationContent tabIndex={undefined}>
-        {messages.map((receivedMessage) => {
+        {messages.map((receivedMessage, index) => {
           const { id, timestamp, from, message } = receivedMessage;
           const locale = navigator?.language ?? 'en-US';
           const messageOrigin = from?.isLocal ? 'user' : 'assistant';
           const time = new Date(timestamp);
           const title = time.toLocaleTimeString(locale, { timeStyle: 'full' });
+          const messageId = typeof id === 'string' ? id.trim() : id;
+          const messageKey = [
+            messageId || 'message',
+            from?.identity || messageOrigin,
+            timestamp || index,
+            index,
+          ].join('-');
 
           return (
-            <Message key={id} title={title} from={messageOrigin}>
+            <Message key={messageKey} title={title} from={messageOrigin}>
               <MessageContent tabIndex={undefined}>
                 <MessageResponse>{message}</MessageResponse>
               </MessageContent>

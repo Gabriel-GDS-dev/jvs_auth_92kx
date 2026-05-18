@@ -184,11 +184,19 @@ export const SessionView = ({
         >
           <div className="flex flex-col gap-4 min-h-full justify-end pb-4 pt-12">
             <AnimatePresence>
-              {messages.map((msg) => {
+              {messages.map((msg, index) => {
                 const isLocal = msg.from?.isLocal;
+                const messageId = typeof msg.id === 'string' ? msg.id.trim() : msg.id;
+                const messageKey = [
+                  messageId || 'message',
+                  msg.from?.identity || (isLocal ? 'local' : 'remote'),
+                  msg.timestamp || index,
+                  index,
+                ].join('-');
+
                 return (
                   <motion.div 
-                    key={msg.id}
+                    key={messageKey}
                     initial={{ opacity: 0, x: 20 }}
                     animate={{ opacity: 1, x: 0 }}
                     className={cn(

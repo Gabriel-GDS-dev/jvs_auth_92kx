@@ -9,6 +9,14 @@ type ConnectionDetails = {
   participantToken: string;
 };
 
+type ConnectionDetailsRequest = {
+  room_config?: {
+    agents?: Array<{
+      agent_name?: string;
+    }>;
+  };
+};
+
 // NOTE: you are expected to define the following environment variables in `.env.local`:
 const API_KEY = process.env.LIVEKIT_API_KEY;
 const API_SECRET = process.env.LIVEKIT_API_SECRET;
@@ -29,9 +37,9 @@ export async function POST(req: Request) {
       throw new Error('LIVEKIT_API_SECRET is not defined');
     }
 
-    // Parse agent configuration from request body
-    const body = await req.json();
-    const agentName: string = body?.room_config?.agents?.[0]?.agent_name;
+    // Parse agent configuration from request body, if the client sent one.
+    const body = await readJsonBody(req);
+    const agentName = body?.room_config?.agents?.[0]?.agent_name;
 
     // Generate participant token
     const participantName = 'user';
@@ -61,6 +69,16 @@ export async function POST(req: Request) {
       return new NextResponse(error.message, { status: 500 });
     }
   }
+}
+
+async function readJsonBody(req: Request): Promise<ConnectionDetailsRequest> {
+  const text = await req.text();
+
+  if (!text.trim()) {
+    return {};
+  }
+
+  return JSON.parse(text) as ConnectionDetailsRequest;
 }
 
 function createParticipantToken(
