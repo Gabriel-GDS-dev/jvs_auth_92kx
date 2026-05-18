@@ -38,6 +38,19 @@ from automacao_jarvis import JarvisControl
 PROJECT_DIR = Path(__file__).resolve().parent
 
 
+def _apply_env_aliases() -> None:
+    aliases = {
+        "LIVETKIT_API_KEY": "LIVEKIT_API_KEY",
+        "LIVETKIT_API_SECRET": "LIVEKIT_API_SECRET",
+        "GEMINI_API_KEY": "GOOGLE_API_KEY",
+        "GOOGLE_CLOUD_PROJECT_LOCATION": "GOOGLE_CLOUD_LOCATION",
+    }
+    for source, target in aliases.items():
+        value = os.getenv(source)
+        if value and not os.getenv(target):
+            os.environ[target] = value
+
+
 def _load_env_files() -> None:
     load_dotenv(PROJECT_DIR / ".env")
     for parent in PROJECT_DIR.parents:
@@ -45,6 +58,7 @@ def _load_env_files() -> None:
         if shared_env.exists():
             load_dotenv(shared_env, override=False)
             break
+    _apply_env_aliases()
 
 
 def _get_google_api_key() -> str | None:
@@ -80,8 +94,12 @@ def _get_google_realtime_model() -> str:
     return (
         os.getenv("GOOGLE_REALTIME_MODEL")
         or os.getenv("GEMINI_REALTIME_MODEL")
-        or "gemini-3.1-flash-live-preview"
+        or "gemini-2.5-flash-native-audio-preview-12-2025"
     )
+
+
+def _supports_initial_generate_reply(model: str) -> bool:
+    return "3.1" not in model
 
 
 _load_env_files()
@@ -585,11 +603,12 @@ async def entrypoint(ctx: agents.JobContext):
     # ── Carregar Memória de Longo Prazo ─────────────────
     # NOTA: Na API v2 do Mem0, user_id vai dentro de 'filters'
     try:
+        memory_limit = max(1, min(_env_int("MEM0_MEMORY_LIMIT", 8), 20))
         logger.info(f"[Mem0] Carregando memórias para '{user_id}'...")
         response = await mem0_client.search(
             query="histórico, preferências e informações pessoais do usuário",
             filters={"user_id": user_id},
-            limit=20,
+            limit=memory_limit,
         )
         # O retorno da v2 pode ser dict com "results" ou lista direta
         if isinstance(response, dict):
@@ -626,13 +645,16 @@ async def entrypoint(ctx: agents.JobContext):
     async def shutdown_hook():
         try:
             msgs = []
-            for item in agent.chat_ctx.items:
+            save_limit = max(1, min(_env_int("MEM0_SAVE_LIMIT", 20), 50))
+            for item in agent.chat_ctx.items[-save_limit:]:
                 if not hasattr(item, "content") or not item.content: # type: ignore
                     continue
                 if item.role not in ("user", "assistant"): # type: ignore
                     continue
                 conteudo = "".join(item.content) if isinstance(item.content, list) else str(item.content) # type: ignore
                 conteudo = conteudo.strip()
+                if conteudo.startswith("[Mem"):
+                    continue
                 if conteudo:
                     msgs.append({"role": item.role, "content": conteudo}) # type: ignore
             if msgs:
@@ -643,9 +665,12 @@ async def entrypoint(ctx: agents.JobContext):
 
     ctx.add_shutdown_callback(shutdown_hook)
 
-    await session.generate_reply(
-        instructions=SESSION_INSTRUCTION + "\nCumprimente o usuário de forma natural e confiante."
-    )
+    if _supports_initial_generate_reply(_get_google_realtime_model()):
+        await session.generate_reply(
+            instructions=SESSION_INSTRUCTION + "\nCumprimente o usuário de forma natural e confiante."
+        )
+    else:
+        logger.info("Pulando saudacao inicial: generate_reply nao e compativel com este modelo Gemini Live.")
 
 
 if __name__ == "__main__":

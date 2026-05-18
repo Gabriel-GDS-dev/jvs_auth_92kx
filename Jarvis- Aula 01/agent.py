@@ -19,7 +19,7 @@ import webbrowser
 import subprocess
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlparse
 import urllib.request as _urllib
 
 try:
@@ -37,10 +37,84 @@ except ImportError:
 from automacao_jarvis import JarvisControl
 
 PROJECT_DIR = Path(__file__).resolve().parent
-load_dotenv(PROJECT_DIR / ".env")
+load_dotenv(PROJECT_DIR / ".env", override=True, encoding="utf-8-sig")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+def _apply_env_aliases() -> None:
+    aliases = {
+        "LIVETKIT_API_KEY": "LIVEKIT_API_KEY",
+        "LIVETKIT_API_SECRET": "LIVEKIT_API_SECRET",
+        "GEMINI_API_KEY": "GOOGLE_API_KEY",
+        "GOOGLE_CLOUD_PROJECT_LOCATION": "GOOGLE_CLOUD_LOCATION",
+    }
+    for source, target in aliases.items():
+        value = os.getenv(source)
+        if value and not os.getenv(target):
+            os.environ[target] = value
+
+
+_apply_env_aliases()
+
+
+def _looks_like_livekit_url(value: str) -> bool:
+    normalized = value.lower()
+    return normalized.startswith(("ws://", "wss://", "http://", "https://")) or "livekit.cloud" in normalized
+
+
+def _validate_livekit_configuration() -> tuple[str, str, str]:
+    livekit_url = (os.getenv("LIVEKIT_URL") or "").strip().rstrip("/")
+    api_key = (os.getenv("LIVEKIT_API_KEY") or "").strip()
+    api_secret = (os.getenv("LIVEKIT_API_SECRET") or "").strip()
+
+    missing = [
+        name
+        for name, value in (
+            ("LIVEKIT_URL", livekit_url),
+            ("LIVEKIT_API_KEY", api_key),
+            ("LIVEKIT_API_SECRET", api_secret),
+        )
+        if not value
+    ]
+    if missing:
+        raise RuntimeError(
+            "Configuracao do LiveKit incompleta. Defina no .env: "
+            + ", ".join(missing)
+            + "."
+        )
+
+    parsed_url = urlparse(livekit_url)
+    if parsed_url.scheme not in ("ws", "wss", "http", "https") or not parsed_url.netloc:
+        raise RuntimeError(
+            "LIVEKIT_URL invalida. Use a URL do projeto LiveKit, por exemplo: "
+            "wss://seu-projeto.livekit.cloud"
+        )
+
+    if _looks_like_livekit_url(api_key):
+        raise RuntimeError(
+            "LIVEKIT_API_KEY parece conter uma URL ou dominio LiveKit. "
+            "No painel LiveKit Cloud, copie somente a API Key do projeto; "
+            "a URL deve ficar apenas em LIVEKIT_URL."
+        )
+
+    if _looks_like_livekit_url(api_secret):
+        raise RuntimeError(
+            "LIVEKIT_API_SECRET parece conter uma URL ou dominio LiveKit. "
+            "Copie o API Secret do mesmo par de chaves usado em LIVEKIT_API_KEY."
+        )
+
+    if os.getenv("LIVETKIT_API_KEY") or os.getenv("LIVETKIT_API_SECRET"):
+        logger.warning(
+            "Variaveis antigas LIVETKIT_* encontradas no ambiente. "
+            "Use LIVEKIT_API_KEY e LIVEKIT_API_SECRET; as variaveis corretas tem prioridade."
+        )
+
+    os.environ["LIVEKIT_URL"] = livekit_url
+    os.environ["LIVEKIT_API_KEY"] = api_key
+    os.environ["LIVEKIT_API_SECRET"] = api_secret
+    return livekit_url, api_key, api_secret
 
 
 class GoogleRealtimeSettings:
@@ -106,7 +180,7 @@ def _get_google_realtime_settings() -> GoogleRealtimeSettings:
         model = (
             "gemini-live-2.5-flash-native-audio"
             if use_vertexai
-            else "gemini-3.1-flash-live-preview"
+            else "gemini-2.5-flash-native-audio-preview-12-2025"
         )
 
     voice = os.getenv("GOOGLE_REALTIME_VOICE", "Charon")
@@ -171,9 +245,17 @@ def _validate_google_realtime_credentials() -> None:
     except HTTPError as exc:
         details = exc.read().decode("utf-8", errors="ignore")
         details_lower = details.lower()
+        if "api_key_invalid" in details_lower or "api key not valid" in details_lower:
+            raise RuntimeError(
+                "A chave do Gemini configurada no .env nao e valida. Gere uma nova chave no Google AI Studio e substitua GEMINI_API_KEY."
+            ) from exc
         if "reported as leaked" in details_lower or "api key was reported as leaked" in details_lower:
             raise RuntimeError(
                 "A chave do Gemini configurada foi bloqueada pelo Google por vazamento. Gere uma nova chave e salve em GEMINI_API_KEY ou GOOGLE_API_KEY no arquivo .env."
+            ) from exc
+        if "resource_exhausted" in details_lower or "quota" in details_lower:
+            raise RuntimeError(
+                "A cota da API Gemini foi excedida. Aguarde o limite resetar, reduza o uso ou aumente a cota/faturamento no Google AI Studio."
             ) from exc
         raise RuntimeError(
             f"Falha ao validar a chave do Gemini ({exc.code}). Revise a credencial e o modelo configurado."
@@ -184,12 +266,18 @@ def _validate_google_realtime_credentials() -> None:
         ) from exc
 
 
-def _validate_startup_configuration() -> None:
+def _validate_startup_configuration() -> tuple[str, str, str]:
     try:
+        livekit_config = _validate_livekit_configuration()
         _validate_google_realtime_credentials()
     except RuntimeError as exc:
         logger.error(str(exc))
         raise SystemExit(1) from exc
+    return livekit_config
+
+
+def _supports_initial_generate_reply(model: str) -> bool:
+    return "3.1" not in model
 
 # ─────────────────────────────────────────
 # BRAVE + CDP
@@ -619,11 +707,12 @@ async def entrypoint(ctx: agents.JobContext):
     # ── Carregar Memória de Longo Prazo ─────────────────
     # NOTA: Na API v2 do Mem0, user_id vai dentro de 'filters'
     try:
+        memory_limit = max(1, min(_env_int("MEM0_MEMORY_LIMIT", 8), 20))
         logger.info(f"[Mem0] Carregando memórias para '{user_id}'...")
         response = await mem0_client.search(
             query="histórico, preferências e informações pessoais do usuário",
             filters={"user_id": user_id},
-            limit=20,
+            limit=memory_limit,
         )
         # O retorno da v2 pode ser dict com "results" ou lista direta
         if isinstance(response, dict):
@@ -660,13 +749,16 @@ async def entrypoint(ctx: agents.JobContext):
     async def shutdown_hook():
         try:
             msgs = []
-            for item in agent.chat_ctx.items:
+            save_limit = max(1, min(_env_int("MEM0_SAVE_LIMIT", 20), 50))
+            for item in agent.chat_ctx.items[-save_limit:]:
                 if not hasattr(item, "content") or not item.content: # type: ignore
                     continue
                 if item.role not in ("user", "assistant"): # type: ignore
                     continue
                 conteudo = "".join(item.content) if isinstance(item.content, list) else str(item.content) # type: ignore
                 conteudo = conteudo.strip()
+                if conteudo.startswith("[Mem"):
+                    continue
                 if conteudo:
                     msgs.append({"role": item.role, "content": conteudo}) # type: ignore
             if msgs:
@@ -677,16 +769,22 @@ async def entrypoint(ctx: agents.JobContext):
 
     ctx.add_shutdown_callback(shutdown_hook)
 
-    await session.generate_reply(
-        instructions=SESSION_INSTRUCTION + "\nCumprimente o usuário de forma natural e confiante."
-    )
+    if _supports_initial_generate_reply(_get_google_realtime_settings().model):
+        await session.generate_reply(
+            instructions=SESSION_INSTRUCTION + "\nCumprimente o usuário de forma natural e confiante."
+        )
+    else:
+        logger.info("Pulando saudacao inicial: generate_reply nao e compativel com este modelo Gemini Live.")
 
 
 if __name__ == "__main__":
-    _validate_startup_configuration()
+    livekit_url, livekit_api_key, livekit_api_secret = _validate_startup_configuration()
     agents.cli.run_app(
         agents.WorkerOptions(
             entrypoint_fnc=entrypoint,
-            ws_url=os.getenv("LIVEKIT_URL"),  # garante que usa a URL do .env
+            ws_url=livekit_url,
+            api_key=livekit_api_key,
+            api_secret=livekit_api_secret,
+            port=_env_int("LIVEKIT_WORKER_PORT", 0),
         )
     )
