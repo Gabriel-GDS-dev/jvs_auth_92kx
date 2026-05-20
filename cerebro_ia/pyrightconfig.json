@@ -1,11 +1,11 @@
 {
-  "venvPath": "./cerebro_ia",
+  "venvPath": ".",
   "venv": "venv",
   "extraPaths": [
-    "./cerebro_ia",
-    "./automacao_pc",
-    "./memoria_pensamento",
-    "./integracoes"
+    ".",
+    "../automacao_pc",
+    "../memoria_pensamento",
+    "../integracoes"
   ],
   "typeCheckingMode": "basic",
   "reportMissingImports": "none",

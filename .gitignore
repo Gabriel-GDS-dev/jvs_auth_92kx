@@ -1,8 +1,7 @@
-Jarvis- Aula 01/google_calendar_credentials.json
-Jarvis- Aula 01/google_calendar_token.json
-Jarvis- Aula 01/onedrive_token_cache.bin
+cerebro_ia/google_calendar_credentials.json
+cerebro_ia/google_calendar_token.json
+cerebro_ia/onedrive_token_cache.bin
 **/onedrive_token_cache.bin
-Jarvis- Aula 01/__pycache__/
 
 # Local secrets
 .env
@@ -14,3 +13,35 @@ Jarvis- Aula 01/__pycache__/
 __pycache__/
 **/__pycache__/
 *.py[cod]
+
+# Generated dependency/runtime folders
+.venv/
+venv/
+**/venv/
+node_modules/
+**/node_modules/
+.next/
+**/.next/
+.pnpm-store/
+**/.pnpm-store/
+.runtime/
+**/.runtime/
+
+# Generated frontend files
+next-env.d.ts
+*.tsbuildinfo
+
+# Jarvis runtime state
+cerebro_ia/cache/*
+!cerebro_ia/cache/.gitkeep
+cerebro_ia/logs/*
+!cerebro_ia/logs/.gitkeep
+cerebro_ia/sandbox/*
+!cerebro_ia/sandbox/.gitkeep
+cerebro_ia/outputs/
+cerebro_ia/whatsapp_service/.wwebjs_auth/
+cerebro_ia/whatsapp_service/.wwebjs_cache/
+
+# Local installers/downloads
+*.zip
+*.msi
