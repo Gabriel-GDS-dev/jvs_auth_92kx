@@ -10,6 +10,9 @@ if %errorlevel% neq 0 (
 	exit /b 1
 )
 
+echo Encerrando servidor antigo do frontend, se existir...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$root=(Resolve-Path '.').Path; $all=Get-CimInstance Win32_Process; $targets=$all | Where-Object { $_.CommandLine -and $_.Name -eq 'node.exe' -and $_.CommandLine.Contains($root) }; foreach ($p in $targets) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }"
+
 echo ----------------------------
 echo Iniciando Frontend Jarvis
 echo ----------------------------
@@ -26,12 +29,12 @@ if exist ".next" (
 	)
 )
 
-if not exist "node_modules" (
-	echo Instalando dependências...
+if not exist "node_modules\next\dist\bin\next" (
+	echo Instalando/reparando dependencias...
 	call pnpm install
 	if %errorlevel% neq 0 (
 		echo.
-		echo ERRO: falha ao instalar dependências.
+		echo ERRO: falha ao instalar dependencias.
 		pause
 		exit /b %errorlevel%
 	)

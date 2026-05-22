@@ -39,7 +39,7 @@ export async function POST(req: Request) {
 
     // Parse agent configuration from request body, if the client sent one.
     const body = await readJsonBody(req);
-    const agentName = body?.room_config?.agents?.[0]?.agent_name;
+    const agentName = body?.room_config?.agents?.[0]?.agent_name?.trim() || undefined;
 
     // Generate participant token
     const participantName = 'user';

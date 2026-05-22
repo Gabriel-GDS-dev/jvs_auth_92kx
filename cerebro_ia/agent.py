@@ -972,12 +972,14 @@ async def entrypoint(ctx: agents.JobContext):
 
 if __name__ == "__main__":
     livekit_url, livekit_api_key, livekit_api_secret = _validate_startup_configuration()
+    agent_name = (os.getenv("AGENT_NAME") or "").strip()
     agents.cli.run_app(
         agents.WorkerOptions(
             entrypoint_fnc=entrypoint,
             ws_url=livekit_url,
             api_key=livekit_api_key,
             api_secret=livekit_api_secret,
+            agent_name=agent_name,
             port=_env_int("LIVEKIT_WORKER_PORT", 0),
         )
     )

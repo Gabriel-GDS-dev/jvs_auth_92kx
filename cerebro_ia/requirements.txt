@@ -1,8 +1,8 @@
-livekit-agents[images]
-livekit-plugins-openai
-livekit-plugins-silero
-livekit-plugins-google
-livekit-plugins-noise-cancellation
+livekit-agents[images]==1.5.12
+livekit-plugins-openai==1.5.12
+livekit-plugins-silero==1.5.12
+livekit-plugins-google==1.5.12
+livekit-plugins-noise-cancellation==0.2.5
 mem0ai
 duckduckgo-search
 langchain_community
@@ -29,7 +29,8 @@ mss
 pytesseract
 reportlab
 beautifulsoup4
-shazamio
+# Opcional: shazamio conflita com livekit-agents>=1.x porque exige aiofiles<24.
+# A ferramenta identificar_musica ja trata a ausencia desse pacote em tempo de execucao.
 sounddevice
 soundfile
 pywin32

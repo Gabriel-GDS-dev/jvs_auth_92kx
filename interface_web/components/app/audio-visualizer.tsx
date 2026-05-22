@@ -51,11 +51,11 @@ export function AudioVisualizer({
       const { audioVisualizerColor } = appConfig;
       return (
         <MotionCentralOrb
-          size={620}
+          state={state}
           isSpeaking={state === 'speaking'}
           audioAmplitude={volume || 0}
-          color={audioVisualizerColor || '#FFB200'}
-          className={cn('size-[min(90vw,620px)] max-h-[86svh] max-w-[86svh]', className)}
+          color={audioVisualizerColor || '#00d8e6'}
+          className={cn('h-full w-full', className)}
           {...props}
         />
       );

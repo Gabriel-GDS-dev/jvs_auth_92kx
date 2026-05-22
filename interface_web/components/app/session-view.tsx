@@ -139,13 +139,13 @@ export const SessionView = ({
   // Definição de Cores Reativas
   const PERSONA_COLORS = {
     alice: '#ff69b4',
-    jarvis: appConfig.audioVisualizerColor || '#00AEEF'
+    jarvis: appConfig.audioVisualizerColor || '#00d8e6'
   };
   const currentColor = PERSONA_COLORS[agentPersona as keyof typeof PERSONA_COLORS] || PERSONA_COLORS.jarvis;
 
   return (
     <section
-      className="relative flex h-svh w-svw flex-col bg-black overflow-hidden"
+      className="relative flex h-svh w-svw flex-col overflow-hidden bg-[#000b0f]"
       {...props}
     >
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -162,7 +162,7 @@ export const SessionView = ({
               <AudioVisualizer 
                 appConfig={{...appConfig, audioVisualizerColor: currentColor}} 
                 isChatOpen={chatOpen}
-                className="opacity-80"
+                className="opacity-100"
               />
             </motion.div>
           </AnimatePresence>
@@ -175,7 +175,7 @@ export const SessionView = ({
         {/* Chat Overlay (Top Right, Transparent, Fade Out at Top) */}
         <div 
           ref={scrollAreaRef}
-          className="absolute top-8 right-8 z-30 w-80 md:w-96 max-h-[60vh] flex flex-col gap-4 overflow-y-auto pointer-events-none scrollbar-hide"
+          className="pointer-events-none absolute top-6 right-5 z-30 flex max-h-[44vh] w-72 flex-col gap-3 overflow-y-auto opacity-75 mix-blend-screen scrollbar-hide md:top-8 md:right-8 md:w-80"
           style={{
             maskImage: 'linear-gradient(to bottom, transparent 0%, black 20%, black 100%)',
             WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, black 20%, black 100%)',
@@ -200,7 +200,7 @@ export const SessionView = ({
                     initial={{ opacity: 0, x: 20 }}
                     animate={{ opacity: 1, x: 0 }}
                     className={cn(
-                      "text-base md:text-lg font-medium py-1 px-3 max-w-[95%] break-words",
+                      "max-w-[95%] break-words px-3 py-1 text-sm font-medium md:text-base",
                       isLocal ? "self-end text-right" : "self-start text-left"
                     )}
                     style={{
@@ -258,7 +258,7 @@ export const SessionView = ({
         {...BOTTOM_VIEW_MOTION_PROPS}
         className="relative z-10 mx-auto mb-4 w-full max-w-3xl px-3"
       >
-        <div className="relative mx-auto max-w-2xl pb-3 md:pb-12 bg-transparent pointer-events-auto">
+        <div className="pointer-events-auto relative mx-auto max-w-2xl bg-transparent pb-3 opacity-85 transition-opacity hover:opacity-100 md:pb-12">
           <AgentControlBar
             variant="livekit"
             controls={controls}

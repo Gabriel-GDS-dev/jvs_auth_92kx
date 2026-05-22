@@ -1,325 +1,526 @@
 'use client';
 
+import { type AgentState } from '@livekit/components-react';
 import { useEffect, useRef } from 'react';
 import { cn } from '@/lib/shadcn/utils';
 
 interface CentralOrbProps {
   size?: number;
+  state?: AgentState;
   isSpeaking?: boolean;
   audioAmplitude?: number;
   color?: string;
   className?: string;
 }
 
-interface Particle {
-  angle: number;
-  radius: number;
-  size: number;
-  speed: number;
-  alpha: number;
+type HudMode = 'connecting' | 'idle' | 'listening' | 'thinking' | 'speaking';
+
+interface Rgb {
+  r: number;
+  g: number;
+  b: number;
 }
 
-interface OrbState {
-  outerA: number;
-  innerA: number;
-  rayA: number;
-  smoothedAmp: number;
-  particles: Particle[];
-  glyphCache: Map<string, HTMLCanvasElement>;
+interface Point3 {
+  x: number;
+  y: number;
+  z: number;
 }
 
-const OUTER_TEXT = '☽ ✦ ☿ ♄ ♃ ☉ ANTIGRAVITY AI ✦ JARVIS ✦ ';
-const INNER_TEXT = '⊕ ⊗ ◈ ⊛ ◉ △ ◇ ✦ ';
-
-function createParticles(count: number): Particle[] {
-  return Array.from({ length: count }, (_, index) => ({
-    angle: (Math.PI * 2 * index) / count,
-    radius: 0.18 + Math.random() * 0.78,
-    size: 0.8 + Math.random() * 2.2,
-    speed: 0.0002 + Math.random() * 0.0008,
-    alpha: 0.25 + Math.random() * 0.55,
-  }));
+interface ProjectedPoint {
+  x: number;
+  y: number;
+  z: number;
+  scale: number;
 }
 
-function getGlyph(
-  cache: Map<string, HTMLCanvasElement>,
-  glyph: string,
-  fontSize: number,
-  color: string
-) {
-  const key = `${glyph}-${Math.round(fontSize)}-${color}`;
-  const cached = cache.get(key);
-  if (cached) return cached;
-
-  const canvas = document.createElement('canvas');
-  const padding = Math.ceil(fontSize * 0.8);
-  canvas.width = Math.ceil(fontSize * 2.4 + padding * 2);
-  canvas.height = Math.ceil(fontSize * 2.4 + padding * 2);
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return canvas;
-
-  ctx.font = `700 ${fontSize}px 'Segoe UI Symbol', 'Apple Symbols', 'Segoe UI', Arial, sans-serif`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.lineWidth = Math.max(2, fontSize * 0.12);
-  ctx.strokeStyle = 'rgba(12, 5, 0, 0.92)';
-  ctx.shadowColor = color;
-  ctx.shadowBlur = fontSize * 0.65;
-  ctx.strokeText(glyph, canvas.width / 2, canvas.height / 2);
-  ctx.fillStyle = '#fffde0';
-  ctx.fillText(glyph, canvas.width / 2, canvas.height / 2);
-  cache.set(key, canvas);
-  return canvas;
+interface HudState {
+  amp: number;
+  ringA: number;
+  ringB: number;
+  ringC: number;
+  polyA: number;
+  waveA: number;
+  lastTime: number;
 }
 
-function drawTextRing(
+const DEFAULT_COLOR = '#00d8e6';
+const PHI = (1 + Math.sqrt(5)) / 2;
+const VERTEX_SCALE = 1 / Math.sqrt(1 + PHI * PHI);
+const ICOSA_POINTS: Point3[] = [
+  { x: -1, y: PHI, z: 0 },
+  { x: 1, y: PHI, z: 0 },
+  { x: -1, y: -PHI, z: 0 },
+  { x: 1, y: -PHI, z: 0 },
+  { x: 0, y: -1, z: PHI },
+  { x: 0, y: 1, z: PHI },
+  { x: 0, y: -1, z: -PHI },
+  { x: 0, y: 1, z: -PHI },
+  { x: PHI, y: 0, z: -1 },
+  { x: PHI, y: 0, z: 1 },
+  { x: -PHI, y: 0, z: -1 },
+  { x: -PHI, y: 0, z: 1 },
+].map((point) => ({
+  x: point.x * VERTEX_SCALE,
+  y: point.y * VERTEX_SCALE,
+  z: point.z * VERTEX_SCALE,
+}));
+
+const ICOSA_EDGES: Array<[number, number]> = (() => {
+  const edges: Array<[number, number]> = [];
+
+  for (let i = 0; i < ICOSA_POINTS.length; i += 1) {
+    for (let j = i + 1; j < ICOSA_POINTS.length; j += 1) {
+      const a = ICOSA_POINTS[i];
+      const b = ICOSA_POINTS[j];
+      const distance = Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+
+      if (distance < 1.08) {
+        edges.push([i, j]);
+      }
+    }
+  }
+
+  return edges;
+})();
+
+function parseColor(value = DEFAULT_COLOR): Rgb {
+  const match = value.match(/^#?([0-9a-f]{6})$/i);
+  const hex = match?.[1] ?? DEFAULT_COLOR.slice(1);
+
+  return {
+    r: parseInt(hex.slice(0, 2), 16),
+    g: parseInt(hex.slice(2, 4), 16),
+    b: parseInt(hex.slice(4, 6), 16),
+  };
+}
+
+function rgba(color: Rgb, alpha: number) {
+  return `rgba(${color.r}, ${color.g}, ${color.b}, ${Math.max(0, Math.min(alpha, 1))})`;
+}
+
+function getMode(state: AgentState | undefined, isSpeaking: boolean): HudMode {
+  if (state === 'speaking' || isSpeaking) return 'speaking';
+  if (state === 'thinking') return 'thinking';
+  if (state === 'listening') return 'listening';
+  if (state === 'connecting' || state === 'initializing') return 'connecting';
+  return 'idle';
+}
+
+function easeAmp(mode: HudMode, rawAmplitude: number) {
+  if (mode !== 'speaking') return mode === 'thinking' ? 0.18 : 0.06;
+  return Math.min(1, Math.max(0.12, rawAmplitude * 1.9));
+}
+
+function rotatePoint(point: Point3, ax: number, ay: number, az: number): Point3 {
+  const sinX = Math.sin(ax);
+  const cosX = Math.cos(ax);
+  const sinY = Math.sin(ay);
+  const cosY = Math.cos(ay);
+  const sinZ = Math.sin(az);
+  const cosZ = Math.cos(az);
+
+  let x = point.x;
+  let y = point.y * cosX - point.z * sinX;
+  let z = point.y * sinX + point.z * cosX;
+
+  const x2 = x * cosY + z * sinY;
+  z = -x * sinY + z * cosY;
+  x = x2;
+
+  const x3 = x * cosZ - y * sinZ;
+  y = x * sinZ + y * cosZ;
+
+  return { x: x3, y, z };
+}
+
+function projectPoint(point: Point3, cx: number, cy: number, radius: number): ProjectedPoint {
+  const depth = 2.8 - point.z * 0.7;
+  const scale = 1.18 / depth;
+
+  return {
+    x: cx + point.x * radius * scale,
+    y: cy + point.y * radius * scale,
+    z: point.z,
+    scale,
+  };
+}
+
+function drawSegmentedRing(
   ctx: CanvasRenderingContext2D,
-  state: OrbState,
-  text: string,
   cx: number,
   cy: number,
   radius: number,
-  fontSize: number,
+  count: number,
   rotation: number,
-  color: string,
-  clockwise: boolean
+  color: Rgb,
+  options: {
+    alpha: number;
+    lineWidth: number;
+    fillRatio: number;
+    pulse?: number;
+    alternate?: boolean;
+  }
 ) {
-  const chars = text.repeat(4).split('');
-  const step = (Math.PI * 2) / chars.length;
+  const step = (Math.PI * 2) / count;
 
-  chars.forEach((char, index) => {
-    if (char === ' ') return;
-    const angle = rotation + step * index * (clockwise ? 1 : -1);
-    const glyph = getGlyph(state.glyphCache, char, fontSize, color);
-    ctx.save();
-    ctx.translate(cx + Math.cos(angle) * radius, cy + Math.sin(angle) * radius);
-    ctx.rotate(angle + Math.PI / 2);
-    ctx.drawImage(glyph, -glyph.width / 2, -glyph.height / 2);
-    ctx.restore();
-  });
-}
+  ctx.save();
+  ctx.lineCap = 'butt';
+  ctx.shadowColor = rgba(color, 0.8);
+  ctx.shadowBlur = options.lineWidth * 2.6;
 
-function drawFlames(
-  ctx: CanvasRenderingContext2D,
-  cx: number,
-  cy: number,
-  r: number,
-  t: number,
-  amp: number
-) {
-  const rays = 32;
-  for (let i = 0; i < rays; i += 1) {
-    const angle = (Math.PI * 2 * i) / rays + t * 0.0003;
-    const length = r * (0.2 + (i % 2 ? 0.22 : 0.36) + amp * 0.18);
-    const points = 18;
+  for (let i = 0; i < count; i += 1) {
+    const skip = options.alternate && i % 4 === 1;
+    if (skip) continue;
+
+    const wave = 1 + Math.sin(rotation * 2.5 + i * 0.9) * (options.pulse ?? 0);
+    const alpha = options.alpha * wave;
+    const start = rotation + i * step;
+    const end = start + step * options.fillRatio;
+
     ctx.beginPath();
-    for (let p = 0; p <= points; p += 1) {
-      const f = p / points;
-      const waveEnv = Math.sin(f * Math.PI);
-      const wobble = Math.sin(t * 0.006 + i * 0.9 + f * 8) * r * 0.018 * waveEnv * (1 + amp);
-      const rr = r * 0.08 + f * length;
-      const x = cx + Math.cos(angle) * rr + Math.cos(angle + Math.PI / 2) * wobble;
-      const y = cy + Math.sin(angle) * rr + Math.sin(angle + Math.PI / 2) * wobble;
-      if (p === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    }
-    ctx.strokeStyle = i % 2 ? 'rgba(255, 178, 0, 0.42)' : 'rgba(255, 245, 190, 0.72)';
-    ctx.lineWidth = i % 2 ? 1.0 : 1.8;
-    ctx.shadowColor = '#ff9d00';
-    ctx.shadowBlur = 12 + amp * 22;
+    ctx.arc(cx, cy, radius, start, end);
+    ctx.strokeStyle = rgba(color, alpha);
+    ctx.lineWidth = options.lineWidth;
     ctx.stroke();
   }
-  ctx.shadowBlur = 0;
+
+  ctx.restore();
 }
 
-function drawOrb(
+function drawBackground(
   ctx: CanvasRenderingContext2D,
-  state: OrbState,
   width: number,
   height: number,
-  t: number,
-  isSpeaking: boolean,
-  amplitude: number,
-  color: string
+  color: Rgb,
+  amp: number
 ) {
   const cx = width / 2;
   const cy = height / 2;
-  const r = Math.min(width, height) * 0.499;
-  const ampTarget = isSpeaking ? Math.min(1, amplitude * 1.35) : 0;
-  state.smoothedAmp += (ampTarget - state.smoothedAmp) * 0.08;
-  const amp = state.smoothedAmp;
-  const breath = 1 + Math.sin(t * 0.003) * 0.025 + amp * 0.22;
+  const maxR = Math.hypot(width, height) * 0.58;
 
-  ctx.clearRect(0, 0, width, height);
-  ctx.save();
-  ctx.translate(cx, cy);
-  ctx.scale(breath, breath);
-  ctx.translate(-cx, -cy);
-
-  const atmosphere = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
-  atmosphere.addColorStop(0, 'rgba(255, 210, 60, 0.22)');
-  atmosphere.addColorStop(0.5, 'rgba(255, 140, 0, 0.07)');
-  atmosphere.addColorStop(1, 'rgba(0, 0, 0, 0)');
-  ctx.fillStyle = atmosphere;
+  const base = ctx.createRadialGradient(cx, cy, 0, cx, cy, maxR);
+  base.addColorStop(0, rgba(color, 0.22 + amp * 0.12));
+  base.addColorStop(0.34, 'rgba(0, 64, 77, 0.18)');
+  base.addColorStop(0.7, 'rgba(0, 20, 26, 0.92)');
+  base.addColorStop(1, 'rgba(0, 4, 8, 1)');
+  ctx.fillStyle = base;
   ctx.fillRect(0, 0, width, height);
 
-  state.particles.forEach((particle) => {
-    particle.angle += particle.speed * (1 + amp * 2);
-    const px = cx + Math.cos(particle.angle) * r * particle.radius;
-    const py = cy + Math.sin(particle.angle) * r * particle.radius;
-    ctx.beginPath();
-    ctx.fillStyle = `rgba(255, 202, 45, ${particle.alpha})`;
-    ctx.shadowColor = '#ffd700';
-    ctx.shadowBlur = 8;
-    ctx.arc(px, py, particle.size, 0, Math.PI * 2);
-    ctx.fill();
-  });
-  ctx.shadowBlur = 0;
+  const vignette = ctx.createRadialGradient(cx, cy, Math.min(width, height) * 0.12, cx, cy, maxR);
+  vignette.addColorStop(0, 'rgba(0, 0, 0, 0)');
+  vignette.addColorStop(0.76, 'rgba(0, 0, 0, 0.08)');
+  vignette.addColorStop(1, 'rgba(0, 0, 0, 0.88)');
+  ctx.fillStyle = vignette;
+  ctx.fillRect(0, 0, width, height);
+}
 
-  drawFlames(ctx, cx, cy, r, t, amp);
+function drawRadialRays(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  base: number,
+  rotation: number,
+  color: Rgb,
+  amp: number
+) {
+  const count = 72;
 
-  const sides = 12;
-  const polygonR = r * 0.46;
-  const fill = ctx.createRadialGradient(cx, cy, 0, cx, cy, polygonR);
-  fill.addColorStop(0, 'rgba(255, 253, 232, 0.56)');
-  fill.addColorStop(0.28, 'rgba(255, 215, 0, 0.38)');
-  fill.addColorStop(0.72, 'rgba(255, 140, 0, 0.18)');
-  fill.addColorStop(1, 'rgba(140, 60, 0, 0.02)');
-  ctx.beginPath();
-  for (let i = 0; i <= sides; i += 1) {
-    const angle = -Math.PI / 2 + (Math.PI * 2 * i) / sides + state.rayA;
-    const x = cx + Math.cos(angle) * polygonR;
-    const y = cy + Math.sin(angle) * polygonR;
-    if (i === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-  }
-  ctx.fillStyle = fill;
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(255, 210, 60, 0.82)';
-  ctx.lineWidth = 4;
-  ctx.shadowColor = '#ffb000';
-  ctx.shadowBlur = 30 + amp * 35;
-  ctx.stroke();
-  ctx.shadowBlur = 0;
+  ctx.save();
+  ctx.shadowColor = rgba(color, 0.45);
+  ctx.shadowBlur = 8 + amp * 16;
+  ctx.lineCap = 'round';
 
-  for (let ring = 0; ring < 5; ring += 1) {
-    ctx.beginPath();
-    ctx.arc(cx, cy, r * (0.2 + ring * 0.11), 0, Math.PI * 2);
-    ctx.strokeStyle = `rgba(255, 190, 25, ${0.16 - ring * 0.018})`;
-    ctx.lineWidth = 1;
-    ctx.stroke();
-  }
+  for (let i = 0; i < count; i += 1) {
+    const angle = rotation + (Math.PI * 2 * i) / count;
+    const inner = base * (0.055 + (i % 3) * 0.006);
+    const outer = base * (0.82 + Math.sin(rotation * 3 + i) * 0.02 + amp * 0.16);
+    const alpha = 0.08 + (i % 6 === 0 ? 0.15 : 0) + amp * 0.08;
 
-  for (let i = 0; i < 120; i += 1) {
-    const angle = (Math.PI * 2 * i) / 120 + state.outerA;
-    const major = i % 10 === 0;
-    const inner = r * (major ? 0.82 : 0.86);
-    const outer = r * 0.91;
     ctx.beginPath();
     ctx.moveTo(cx + Math.cos(angle) * inner, cy + Math.sin(angle) * inner);
     ctx.lineTo(cx + Math.cos(angle) * outer, cy + Math.sin(angle) * outer);
-    ctx.strokeStyle = major ? 'rgba(255, 245, 180, 0.75)' : 'rgba(255, 176, 0, 0.32)';
-    ctx.lineWidth = major ? 1.6 : 0.7;
+    ctx.strokeStyle = rgba(color, alpha);
+    ctx.lineWidth = i % 6 === 0 ? 2.1 : 1.2;
     ctx.stroke();
   }
 
-  drawTextRing(ctx, state, OUTER_TEXT, cx, cy, r * 0.78, Math.max(16, r * 0.075), state.outerA, color, false);
-  drawTextRing(ctx, state, INNER_TEXT, cx, cy, r * 0.58, Math.max(13, r * 0.055), state.innerA, '#ffd000', true);
+  ctx.restore();
+}
 
-  if (amp > 0.02) {
-    for (let i = 0; i < 5; i += 1) {
-      const phase = (t * 0.002 + i / 5) % 1;
-      ctx.beginPath();
-      ctx.arc(cx, cy, r * (0.12 + phase * 0.82), 0, Math.PI * 2);
-      ctx.strokeStyle = `rgba(255, ${220 - i * 24}, 80, ${(1 - phase) * amp * 0.32})`;
-      ctx.lineWidth = 2;
-      ctx.stroke();
-    }
+function drawAudioWaves(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  ringRadius: number,
+  color: Rgb,
+  waveA: number,
+  amp: number,
+  mode: HudMode
+) {
+  if (mode !== 'speaking' && mode !== 'thinking') return;
+
+  const strength = mode === 'speaking' ? amp : 0.16;
+  const waveCount = mode === 'speaking' ? 5 : 2;
+
+  ctx.save();
+  ctx.shadowColor = rgba(color, 0.8);
+  ctx.shadowBlur = 18 + strength * 28;
+
+  for (let i = 0; i < waveCount; i += 1) {
+    const phase = (waveA + i / waveCount) % 1;
+    const radius = ringRadius * (0.98 + phase * (0.44 + strength * 0.28));
+    const alpha = (1 - phase) * (0.12 + strength * 0.38);
+
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.strokeStyle = rgba(color, alpha);
+    ctx.lineWidth = 1.4 + strength * 3;
+    ctx.stroke();
   }
 
-  const coreR = r * (0.1 + amp * 0.035);
-  const core = ctx.createRadialGradient(cx - coreR * 0.25, cy - coreR * 0.25, 0, cx, cy, coreR * 2.2);
-  core.addColorStop(0, '#ffffff');
-  core.addColorStop(0.22, '#fffde8');
-  core.addColorStop(0.52, '#ffd700');
-  core.addColorStop(1, '#c96f00');
-  ctx.beginPath();
-  ctx.shadowColor = '#ffd700';
-  ctx.shadowBlur = 60 + amp * 90;
-  ctx.fillStyle = core;
-  ctx.arc(cx, cy, coreR, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.shadowBlur = 0;
-  ctx.beginPath();
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.72)';
-  ctx.arc(cx - coreR * 0.28, cy - coreR * 0.32, coreR * 0.23, 0, Math.PI * 2);
-  ctx.fill();
+  ctx.restore();
+}
+
+function drawPolyhedron(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  radius: number,
+  state: HudState,
+  color: Rgb,
+  time: number,
+  mode: HudMode
+) {
+  const pulse = mode === 'thinking' ? 0.09 : mode === 'speaking' ? 0.13 + state.amp * 0.2 : 0.025;
+  const localRadius = radius * (1 + Math.sin(time * 2.2) * pulse);
+  const pointDrift = mode === 'thinking' || mode === 'speaking' ? radius * (0.02 + state.amp * 0.035) : radius * 0.006;
+  const ax = state.polyA * 0.72;
+  const ay = state.polyA * (mode === 'speaking' ? 1.32 : 0.88);
+  const az = state.polyA * 0.28;
+
+  const points = ICOSA_POINTS.map((point, index) => {
+    const drift = {
+      x: Math.sin(time * 1.6 + index * 1.9) * pointDrift,
+      y: Math.cos(time * 1.3 + index * 1.4) * pointDrift,
+      z: Math.sin(time * 1.1 + index * 1.1) * 0.05,
+    };
+    const rotated = rotatePoint(
+      {
+        x: point.x + drift.x / Math.max(radius, 1),
+        y: point.y + drift.y / Math.max(radius, 1),
+        z: point.z + drift.z,
+      },
+      ax,
+      ay,
+      az
+    );
+
+    return projectPoint(rotated, cx, cy, localRadius * 2.45);
+  });
+
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.shadowColor = rgba(color, 0.95);
+  ctx.shadowBlur = 10 + state.amp * 24;
+
+  for (const [from, to] of ICOSA_EDGES) {
+    const a = points[from];
+    const b = points[to];
+    const depth = (a.z + b.z + 2) / 4;
+
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.strokeStyle = rgba(color, 0.42 + depth * 0.45 + state.amp * 0.18);
+    ctx.lineWidth = 1.5 + depth * 2.2 + state.amp * 2.2;
+    ctx.stroke();
+  }
+
+  points.forEach((point, index) => {
+    const dot = 4.5 + point.scale * 9 + (index % 3 === 0 ? state.amp * 9 : state.amp * 4);
+    const glow = 0.54 + point.scale * 0.42;
+
+    ctx.beginPath();
+    ctx.fillStyle = rgba(color, glow);
+    ctx.arc(point.x, point.y, dot, 0, Math.PI * 2);
+    ctx.fill();
+  });
 
   ctx.restore();
+}
 
-  state.outerA -= 0.00085 * (1 + amp * 2);
-  state.innerA += 0.0013 * (1 + amp * 2);
-  state.rayA += 0.0003 * (1 + amp * 2);
+function drawHud(
+  ctx: CanvasRenderingContext2D,
+  hud: HudState,
+  width: number,
+  height: number,
+  time: number,
+  props: Required<Pick<CentralOrbProps, 'isSpeaking' | 'audioAmplitude' | 'color'>> & {
+    state?: AgentState;
+  }
+) {
+  const color = parseColor(props.color);
+  const mode = getMode(props.state, props.isSpeaking);
+  const dt = hud.lastTime ? Math.min(0.05, Math.max(0.001, time - hud.lastTime)) : 0.016;
+  hud.lastTime = time;
+
+  const targetAmp = easeAmp(mode, props.audioAmplitude);
+  hud.amp += (targetAmp - hud.amp) * (mode === 'speaking' ? 0.16 : 0.08);
+
+  const speed = {
+    connecting: 0.25,
+    idle: 0.34,
+    listening: 0.5,
+    thinking: 1.15,
+    speaking: 2.25,
+  }[mode];
+
+  hud.ringA += dt * speed * (0.22 + hud.amp * 0.55);
+  hud.ringB -= dt * speed * (0.17 + hud.amp * 0.38);
+  hud.ringC += dt * speed * (0.08 + hud.amp * 0.18);
+  hud.polyA += dt * (mode === 'speaking' ? 1.65 : mode === 'thinking' ? 0.78 : 0.22);
+  hud.waveA = (hud.waveA + dt * (mode === 'speaking' ? 0.85 + hud.amp * 0.95 : 0.24)) % 1;
+
+  const cx = width / 2;
+  const cy = height / 2;
+  const base = Math.min(width, height);
+  const ringRadius = base * (width > height * 1.2 ? 0.39 : 0.35);
+  const opacityScale = mode === 'connecting' ? 0.72 : 1;
+
+  ctx.clearRect(0, 0, width, height);
+  drawBackground(ctx, width, height, color, hud.amp);
+  drawRadialRays(ctx, cx, cy, base, hud.ringC, color, hud.amp);
+
+  ctx.save();
+  ctx.globalAlpha = opacityScale;
+
+  drawAudioWaves(ctx, cx, cy, ringRadius, color, hud.waveA, hud.amp, mode);
+
+  drawSegmentedRing(ctx, cx, cy, ringRadius * 1.56, 36, hud.ringA, color, {
+    alpha: 0.46 + hud.amp * 0.22,
+    fillRatio: 0.42,
+    lineWidth: Math.max(8, base * 0.012),
+    pulse: mode === 'speaking' ? 0.24 : 0.06,
+    alternate: true,
+  });
+  drawSegmentedRing(ctx, cx, cy, ringRadius * 1.34, 42, hud.ringB, color, {
+    alpha: 0.54 + hud.amp * 0.25,
+    fillRatio: 0.34,
+    lineWidth: Math.max(6, base * 0.009),
+    pulse: mode === 'speaking' ? 0.18 : 0.04,
+  });
+  drawSegmentedRing(ctx, cx, cy, ringRadius * 1.13, 48, hud.ringA * -0.75, color, {
+    alpha: 0.68 + hud.amp * 0.22,
+    fillRatio: 0.26,
+    lineWidth: Math.max(5, base * 0.007),
+    pulse: mode === 'speaking' ? 0.2 : 0.05,
+    alternate: true,
+  });
+
+  ctx.save();
+  ctx.shadowColor = rgba(color, 0.85);
+  ctx.shadowBlur = 22 + hud.amp * 30;
+  ctx.beginPath();
+  ctx.arc(cx, cy, ringRadius, 0, Math.PI * 2);
+  ctx.strokeStyle = rgba(color, 0.58 + hud.amp * 0.2);
+  ctx.lineWidth = Math.max(10, base * 0.013);
+  ctx.stroke();
+  ctx.restore();
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cx, cy, ringRadius * 0.86, 0, Math.PI * 2);
+  ctx.strokeStyle = rgba(color, 0.1 + hud.amp * 0.08);
+  ctx.lineWidth = 1.2;
+  ctx.stroke();
+  ctx.restore();
+
+  drawPolyhedron(ctx, cx, cy, ringRadius * 0.52, hud, color, time, mode);
+
+  ctx.save();
+  const centerGlow = ctx.createRadialGradient(cx, cy, 0, cx, cy, ringRadius * 0.42);
+  centerGlow.addColorStop(0, rgba(color, 0.28 + hud.amp * 0.28));
+  centerGlow.addColorStop(0.26, rgba(color, 0.1 + hud.amp * 0.14));
+  centerGlow.addColorStop(1, rgba(color, 0));
+  ctx.fillStyle = centerGlow;
+  ctx.fillRect(cx - ringRadius, cy - ringRadius, ringRadius * 2, ringRadius * 2);
+  ctx.restore();
+
+  ctx.restore();
 }
 
 export function CentralOrb({
-  size = 620,
+  state,
   isSpeaking = false,
   audioAmplitude = 0,
-  color = '#ffb200',
+  color = DEFAULT_COLOR,
   className,
 }: CentralOrbProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const propsRef = useRef({ isSpeaking, audioAmplitude, color });
-  const stateRef = useRef<OrbState>({
-    outerA: 0,
-    innerA: 0,
-    rayA: 0,
-    smoothedAmp: 0,
-    particles: createParticles(145),
-    glyphCache: new Map(),
+  const propsRef = useRef({ state, isSpeaking, audioAmplitude, color });
+  const hudRef = useRef<HudState>({
+    amp: 0,
+    ringA: 0,
+    ringB: 0,
+    ringC: 0,
+    polyA: 0,
+    waveA: 0,
+    lastTime: 0,
   });
 
-  propsRef.current = { isSpeaking, audioAmplitude, color };
+  propsRef.current = { state, isSpeaking, audioAmplitude, color };
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    let frame = 0;
     let active = true;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    canvas.width = size * dpr;
-    canvas.height = size * dpr;
-    canvas.style.width = `${size}px`;
-    canvas.style.height = `${size}px`;
-    ctx.scale(dpr, dpr);
+    let frame = 0;
+    let width = 1;
+    let height = 1;
 
-    const loop = (time: number) => {
+    const resize = () => {
+      const rect = canvas.getBoundingClientRect();
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      width = Math.max(1, Math.floor(rect.width));
+      height = Math.max(1, Math.floor(rect.height));
+      canvas.width = Math.floor(width * dpr);
+      canvas.height = Math.floor(height * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    };
+
+    const observer = new ResizeObserver(resize);
+    observer.observe(canvas);
+    resize();
+
+    const loop = (timeMs: number) => {
       if (!active) return;
-      const { isSpeaking: speaking, audioAmplitude: amp, color: liveColor } = propsRef.current;
-      drawOrb(ctx, stateRef.current, size, size, time, speaking, amp, liveColor);
+      drawHud(ctx, hudRef.current, width, height, timeMs / 1000, propsRef.current);
       frame = requestAnimationFrame(loop);
     };
 
     frame = requestAnimationFrame(loop);
+
     return () => {
       active = false;
       cancelAnimationFrame(frame);
+      observer.disconnect();
     };
-  }, [size]);
+  }, []);
 
   return (
     <canvas
       ref={canvasRef}
       aria-hidden="true"
-      className={cn('pointer-events-none bg-transparent', className)}
+      className={cn('pointer-events-none h-full w-full bg-transparent', className)}
       style={{ background: 'transparent' }}
     />
   );
 }
 
 export default CentralOrb;
-

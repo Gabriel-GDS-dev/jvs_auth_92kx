@@ -49,12 +49,12 @@ export const APP_CONFIG_DEFAULTS: AppConfig = {
   startButtonText: 'Iniciar Chamada',
 
   // agent dispatch configuration
-  agentName: process.env.AGENT_NAME ?? undefined,
+  agentName: process.env.AGENT_NAME?.trim() || undefined,
 
   // LiveKit Cloud Sandbox configuration
   sandboxId: undefined,
 
   // audio visualizer configuration
   audioVisualizerType: 'centralOrb',
-  audioVisualizerColor: '#FFB200',
+  audioVisualizerColor: '#00d8e6',
 };
