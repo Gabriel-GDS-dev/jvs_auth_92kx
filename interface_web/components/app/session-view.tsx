@@ -1,16 +1,13 @@
 'use client';
 
-import dynamic from 'next/dynamic';
 import React, { useEffect, useRef, useState, memo } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   useSessionContext,
   useSessionMessages,
-  useTrackVolume,
   useVoiceAssistant,
   useRemoteParticipants,
 } from '@livekit/components-react';
-import { Track } from 'livekit-client';
 import type { AppConfig } from '@/app-config';
 import {
   AgentControlBar,
@@ -18,11 +15,8 @@ import {
 } from '@/components/agents-ui/agent-control-bar';
 import { TileLayout } from '@/components/app/tile-layout';
 import { cn } from '@/lib/shadcn/utils';
-import { Shimmer } from '../ai-elements/shimmer';
 
 const MotionBottom = motion.create('div');
-
-const MotionMessage = motion.create(Shimmer);
 
 const BOTTOM_VIEW_MOTION_PROPS = {
   variants: {
@@ -43,30 +37,6 @@ const BOTTOM_VIEW_MOTION_PROPS = {
     delay: 0.5,
     ease: 'easeOut' as const,
   },
-};
-
-const SHIMMER_MOTION_PROPS = {
-  variants: {
-    visible: {
-      opacity: 1,
-      transition: {
-        ease: 'easeIn' as const,
-        duration: 0.5,
-        delay: 0.8,
-      },
-    },
-    hidden: {
-      opacity: 0,
-      transition: {
-        ease: 'easeIn' as const,
-        duration: 0.5,
-        delay: 0,
-      },
-    },
-  },
-  initial: 'hidden',
-  animate: 'visible',
-  exit: 'hidden',
 };
 
 interface FadeProps {
@@ -187,10 +157,14 @@ export const SessionView = ({
               {messages.map((msg, index) => {
                 const isLocal = msg.from?.isLocal;
                 const messageId = typeof msg.id === 'string' ? msg.id.trim() : msg.id;
+                const timestamp =
+                  typeof msg.timestamp === 'number' || typeof msg.timestamp === 'string'
+                    ? msg.timestamp
+                    : '';
                 const messageKey = [
-                  messageId || 'message',
+                  messageId || `message-${index}`,
                   msg.from?.identity || (isLocal ? 'local' : 'remote'),
-                  msg.timestamp || index,
+                  timestamp || index,
                   index,
                 ].join('-');
 
@@ -220,6 +194,7 @@ export const SessionView = ({
               
               {messages.length === 0 && appConfig.isPreConnectBufferEnabled && (
                 <motion.div
+                  key="preconnect-buffer"
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   className="self-end text-right py-1 px-3 text-sm font-medium opacity-60 italic"
@@ -235,6 +210,7 @@ export const SessionView = ({
               {/* Thinking Indicator */}
               {agentState === 'thinking' && (
                 <motion.div
+                  key="thinking-indicator"
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   className="self-start text-left py-1 px-3 text-sm font-medium font-mono"

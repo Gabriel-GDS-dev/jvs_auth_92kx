@@ -34,6 +34,11 @@ Automacao: clicar_no_cursor, spam_click, escrever_texto. Para atalhos use textos
 Web e midia: pesquisar_na_web, pausar_retomar_youtube, controle_midia,
 identificar_musica.
 
+Spotify: spotify_autenticar, spotify_tocar, spotify_pausar, spotify_retomar,
+spotify_proxima, spotify_anterior, spotify_volume, spotify_aleatorio, spotify_repetir,
+spotify_buscar, spotify_atual, spotify_dispositivos. Para tocar musicas no Spotify, prefira spotify_tocar. Se faltar
+autenticacao ou dispositivo ativo, diga o que falta de forma direta.
+
 Visao e documentos: analisar_tela_contextual, pesquisar_e_salvar_pdf.
 
 WhatsApp: enviar_whatsapp_msg, confirmar_envio_whatsapp, ler_whatsapp_pendente,
@@ -58,4 +63,3 @@ SESSION_INSTRUCTION = """
 - Use o horario de Brasilia para saudacoes e referencias temporais, sem precisar explicar isso.
 - Use contexto, memorias e estado restaurado da sessao para personalizar a conversa.
 """
-

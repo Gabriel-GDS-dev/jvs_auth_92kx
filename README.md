@@ -31,8 +31,20 @@ Variaveis novas ou esperadas:
 - `GROQ_API_KEY`, `OPENROUTER_API_KEY`, `TAVILY_API_KEY`, `SERPER_API_KEY`, `JINA_API_KEY`
 - `COHERE_API_KEY`, `CARTESIA_API_KEY`, `OCRSPACE_API_KEY`, `SEARXNG_URL`
 - `WHATSAPP_SERVICE_URL=http://127.0.0.1:3333`
+- `SPOTIFY_CLIENT_ID`, `SPOTIFY_REDIRECT_URI=http://127.0.0.1:8888/callback`
+- `SPOTIFY_AUTH_FLOW=pkce`, `SPOTIFY_MARKET=BR`
 
 Ferramentas que dependem de API externa retornam erro claro quando a chave correspondente nao existir.
+
+## Spotify
+
+1. Crie um app no Spotify Developer Dashboard.
+2. Cadastre exatamente este Redirect URI no app: `http://127.0.0.1:8888/callback`.
+3. Copie o Client ID para `SPOTIFY_CLIENT_ID` no `cerebro_ia/.env`.
+4. Inicie o Jarvis e diga `autenticar Spotify`.
+5. Depois do login, use comandos como `tocar Daft Punk no Spotify`, `pausar Spotify`, `proxima musica`, `volume do Spotify 40`, `modo aleatorio ligado` ou `o que esta tocando`.
+
+O token OAuth fica salvo em `cerebro_ia/cache/spotify_token_cache.json`, que ja e uma pasta ignorada pelo Git. Para controle de playback, mantenha o Spotify aberto em algum dispositivo e use uma conta Premium quando a API exigir controle por Spotify Connect.
 
 ## Rodar
 

@@ -7,6 +7,7 @@ from pathlib import Path
 from modules.path_memory import PathMemory
 from modules.smart_writer import SmartTextAutomation
 from routers.intent_router import IntentRouter
+from services.spotify_service import SpotifyService
 
 
 class CoreModuleTests(unittest.TestCase):
@@ -28,7 +29,16 @@ class CoreModuleTests(unittest.TestCase):
         writer = SmartTextAutomation()
         self.assertFalse(writer.parse_and_execute_keys("texto normal"))
 
+    def test_spotify_url_to_uri(self):
+        self.assertEqual(
+            SpotifyService.spotify_uri_from_input("https://open.spotify.com/track/abc123?si=teste"),
+            ("track", "spotify:track:abc123"),
+        )
+        self.assertEqual(
+            SpotifyService.spotify_uri_from_input("spotify:playlist:xyz789"),
+            ("playlist", "spotify:playlist:xyz789"),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
-

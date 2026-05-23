@@ -176,7 +176,7 @@ def _get_google_api_key() -> str | None:
 
 
 def _jarvis_video_enabled() -> bool:
-    return _env_flag("JARVIS_VIDEO_ENABLED", True)
+    return _env_flag("JARVIS_VIDEO_ENABLED", False)
 
 
 def _jarvis_video_sampler() -> VoiceActivityVideoSampler:
@@ -743,6 +743,66 @@ class Assistant(Agent):
     async def identificar_musica(self, segundos: int = 8):
         """Identifica a musica tocando pelo audio do sistema quando ShazamIO e captura estiverem configurados."""
         return await self.ecosystem.music.identify(segundos)
+
+    @agents.function_tool
+    async def spotify_autenticar(self):
+        """Abre o login do Spotify e salva o token local para controlar playback."""
+        return await asyncio.to_thread(self.ecosystem.spotify.authenticate)
+
+    @agents.function_tool
+    async def spotify_tocar(self, consulta: str = "", uri: str = "", tipo: str = "musica"):
+        """Toca musica, album, artista ou playlist no Spotify. Use tipo: musica, album, artista ou playlist."""
+        return await asyncio.to_thread(self.ecosystem.spotify.play, consulta, uri, tipo)
+
+    @agents.function_tool
+    async def spotify_pausar(self):
+        """Pausa o Spotify."""
+        return await asyncio.to_thread(self.ecosystem.spotify.pause)
+
+    @agents.function_tool
+    async def spotify_retomar(self):
+        """Retoma o Spotify."""
+        return await asyncio.to_thread(self.ecosystem.spotify.resume)
+
+    @agents.function_tool
+    async def spotify_proxima(self):
+        """Pula para a proxima musica no Spotify."""
+        return await asyncio.to_thread(self.ecosystem.spotify.next_track)
+
+    @agents.function_tool
+    async def spotify_anterior(self):
+        """Volta para a musica anterior no Spotify."""
+        return await asyncio.to_thread(self.ecosystem.spotify.previous_track)
+
+    @agents.function_tool
+    async def spotify_volume(self, porcentagem: int):
+        """Ajusta o volume do Spotify de 0 a 100."""
+        return await asyncio.to_thread(self.ecosystem.spotify.volume, porcentagem)
+
+    @agents.function_tool
+    async def spotify_aleatorio(self, ligado: bool):
+        """Liga ou desliga o modo aleatorio do Spotify."""
+        return await asyncio.to_thread(self.ecosystem.spotify.shuffle, ligado)
+
+    @agents.function_tool
+    async def spotify_repetir(self, modo: str):
+        """Ajusta repeticao do Spotify. Modos: musica, playlist, album ou desligado."""
+        return await asyncio.to_thread(self.ecosystem.spotify.repeat, modo)
+
+    @agents.function_tool
+    async def spotify_buscar(self, consulta: str, limite: int = 5):
+        """Busca musicas no Spotify e lista as melhores opcoes."""
+        return await asyncio.to_thread(self.ecosystem.spotify.search_tracks, consulta, limite)
+
+    @agents.function_tool
+    async def spotify_atual(self):
+        """Informa a musica atual do Spotify."""
+        return await asyncio.to_thread(self.ecosystem.spotify.current)
+
+    @agents.function_tool
+    async def spotify_dispositivos(self):
+        """Lista dispositivos Spotify Connect disponiveis."""
+        return await asyncio.to_thread(self.ecosystem.spotify.devices)
 
     @agents.function_tool
     async def escrever_texto(self, texto: str, alvo: str = ""):

@@ -20,6 +20,7 @@ from services.code_mirror import CodeStyleMirror
 from services.dev_agent import SandboxDevAgent
 from services.git_proactive import GitProactiveService
 from services.meeting_scribe import MeetingGhostScribe
+from services.spotify_service import SpotifyService
 from services.ui_explorer import AutonomousUIExplorer
 from services.whatsapp_cleaner import SmartWhatsAppCleaner
 from services.whatsapp_client import WhatsAppClient
@@ -52,6 +53,7 @@ class JarvisEcosystem:
         self.code_mirror = CodeStyleMirror()
         self.whatsapp_cleaner = SmartWhatsAppCleaner()
         self.music = MusicIdentifier()
+        self.spotify = SpotifyService()
 
     def analisar_tela_contextual(self) -> str:
         return self.vision.parse_screen()
@@ -75,4 +77,3 @@ class JarvisEcosystem:
 
     def rotear_comando_composto(self, comando: str) -> str:
         return str(self.router.route(comando))
-
